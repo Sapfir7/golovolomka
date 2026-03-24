@@ -77,6 +77,7 @@ async function initDb() {
       note TEXT,
       media_type TEXT NOT NULL CHECK (media_type IN ('video', 'photo', 'text')),
       file_id TEXT,
+      preview_file_id TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -87,6 +88,10 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE memories
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  `);
+  await pool.query(`
+    ALTER TABLE memories
+    ADD COLUMN IF NOT EXISTS preview_file_id TEXT;
   `);
 }
 
@@ -530,10 +535,62 @@ function parseCaption(caption) {
   return { color, note };
 }
 
+async function saveMemory({
+  roomId,
+  authorUserId,
+  color,
+  note,
+  mediaType,
+  fileId,
+  previewFileId = null
+}) {
+  await pool.query(
+    `INSERT INTO memories(id, room_id, author_user_id, color, note, media_type, file_id, preview_file_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [uuidv4(), roomId, authorUserId, color, note || "", mediaType, fileId || "", previewFileId]
+  );
+}
+
+bot.action("video_preview_add", async (ctx) => {
+  const user = await getOrCreateUser(ctx.from || {});
+  const state = userFlowState.get(user.id);
+  if (!state || state.step !== "await_video_preview") {
+    await ctx.answerCbQuery("Черновик видео не найден");
+    return;
+  }
+  await ctx.answerCbQuery();
+  await ctx.reply("Отправьте фото, которое нужно использовать как превью этого видео.");
+});
+
+bot.action("video_preview_auto", async (ctx) => {
+  const user = await getOrCreateUser(ctx.from || {});
+  const state = userFlowState.get(user.id);
+  if (!state || state.step !== "await_video_preview") {
+    await ctx.answerCbQuery("Черновик видео не найден");
+    return;
+  }
+  await saveMemory({
+    roomId: state.roomId,
+    authorUserId: user.id,
+    color: state.color,
+    note: state.note,
+    mediaType: "video",
+    fileId: state.videoFileId,
+    previewFileId: state.autoPreviewFileId || null
+  });
+  userFlowState.delete(user.id);
+  await ctx.answerCbQuery("Сохранено");
+  await ctx.reply(
+    "Видео сохранено. Установлено авто-превью (первый кадр).",
+    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp?roomId=${state.roomId}`)]])
+  );
+});
+
 bot.on(["video", "photo"], async (ctx) => {
   const user = await getOrCreateUser(ctx.from || {});
   const state = userFlowState.get(user.id);
-  const roomId = state?.step === "await_memory_content" ? state.roomId : null;
+  const roomId =
+    state?.step === "await_memory_content" || state?.step === "await_video_preview" ? state.roomId : null;
   const activeRoom = roomId ? { id: roomId, title: null } : await getActiveRoom(user.id);
   if (!activeRoom) {
     await ctx.reply("Сначала выберите комнату в «Мои комнаты».");
@@ -545,27 +602,78 @@ bot.on(["video", "photo"], async (ctx) => {
     return;
   }
 
+  if (state?.step === "await_video_preview") {
+    if (!ctx.message.photo) {
+      await ctx.reply("Сейчас ожидается фото для превью. Отправьте фото или нажмите «Авто-превью».");
+      return;
+    }
+    const previewFileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+    await saveMemory({
+      roomId: state.roomId,
+      authorUserId: user.id,
+      color: state.color,
+      note: state.note,
+      mediaType: "video",
+      fileId: state.videoFileId,
+      previewFileId
+    });
+    userFlowState.delete(user.id);
+    await ctx.reply(
+      "Видео сохранено. Использовано ваше превью.",
+      Markup.inlineKeyboard([
+        [Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp?roomId=${state.roomId}`)]
+      ])
+    );
+    return;
+  }
+
   const caption = ctx.message.caption || "";
   const parsed = parseCaption(caption);
   const color = state?.step === "await_memory_content" ? state.color : parsed.color || "yellow";
 
   let mediaType = "video";
   let fileId = "";
+  let autoPreviewFileId = null;
 
   if (ctx.message.video) {
     mediaType = "video";
     fileId = ctx.message.video.file_id;
+    autoPreviewFileId = ctx.message.video.thumbnail?.file_id || null;
   } else if (ctx.message.photo) {
     mediaType = "photo";
     fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
   }
 
-  await pool.query(
-    `INSERT INTO memories(id, room_id, author_user_id, color, note, media_type, file_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [uuidv4(), activeRoom.id, user.id, color, parsed.note || "", mediaType, fileId]
-  );
-  userFlowState.delete(user.id);
+  if (mediaType === "video") {
+    userFlowState.set(user.id, {
+      step: "await_video_preview",
+      roomId: activeRoom.id,
+      color,
+      note: parsed.note || "",
+      videoFileId: fileId,
+      autoPreviewFileId
+    });
+    await ctx.reply(
+      "Видео получено. Добавьте превью или выберите авто-превью (первый кадр).",
+      Markup.inlineKeyboard([
+        [Markup.button.callback("🖼 Добавить превью", "video_preview_add")],
+        [Markup.button.callback("⚡ Авто-превью (первый кадр)", "video_preview_auto")]
+      ])
+    );
+    return;
+  }
+
+  await saveMemory({
+    roomId: activeRoom.id,
+    authorUserId: user.id,
+    color,
+    note: parsed.note || "",
+    mediaType,
+    fileId
+  });
+  if (state?.step === "await_memory_content") {
+    userFlowState.delete(user.id);
+  }
 
   await ctx.reply(
     `Воспоминание сохранено (${colorLabel(color)}).`,
@@ -578,6 +686,11 @@ bot.on("text", async (ctx) => {
   if (value.startsWith("/")) return;
   const user = await getOrCreateUser(ctx.from || {});
   const state = userFlowState.get(user.id);
+
+  if (state?.step === "await_video_preview") {
+    await ctx.reply("Для этого видео ожидается превью. Отправьте фото или нажмите «Авто-превью (первый кадр)».");
+    return;
+  }
 
   if (state?.step === "await_room_name") {
     if (value.length < 2 || value.length > 60) {
@@ -616,11 +729,14 @@ bot.on("text", async (ctx) => {
   }
   const parsed = parseCaption(value);
   const color = state?.step === "await_memory_content" ? state.color : parsed.color || "yellow";
-  await pool.query(
-    `INSERT INTO memories(id, room_id, author_user_id, color, note, media_type, file_id)
-     VALUES ($1, $2, $3, $4, $5, 'text', '')`,
-    [uuidv4(), activeRoom.id, user.id, color, parsed.note || value]
-  );
+  await saveMemory({
+    roomId: activeRoom.id,
+    authorUserId: user.id,
+    color,
+    note: parsed.note || value,
+    mediaType: "text",
+    fileId: ""
+  });
   userFlowState.delete(user.id);
   await ctx.reply(
     `Текстовое воспоминание сохранено (${colorLabel(color)}).`,
