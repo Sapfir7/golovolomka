@@ -5,6 +5,7 @@ const roomInfo = document.getElementById("roomInfo");
 const overlay = document.getElementById("playerOverlay");
 const closeButton = document.getElementById("closeButton");
 const video = document.getElementById("playerVideo");
+const image = document.getElementById("playerImage");
 const playerText = document.getElementById("playerText");
 const noteText = document.getElementById("noteText");
 const editNoteButton = document.getElementById("editNoteButton");
@@ -135,12 +136,26 @@ async function onBallClick(ballElement, memoryId) {
     video.pause();
     video.removeAttribute("src");
     video.classList.add("hidden");
+    image.removeAttribute("src");
+    image.classList.add("hidden");
     playerText.textContent = data.note || "Текстовое воспоминание";
     playerText.classList.remove("hidden");
     return;
   }
 
+  if (data.mediaType === "photo") {
+    video.pause();
+    video.removeAttribute("src");
+    video.classList.add("hidden");
+    playerText.classList.add("hidden");
+    image.classList.remove("hidden");
+    image.src = data.url;
+    return;
+  }
+
   playerText.classList.add("hidden");
+  image.removeAttribute("src");
+  image.classList.add("hidden");
   video.classList.remove("hidden");
   video.src = data.url;
   video.load();
@@ -150,6 +165,8 @@ function closeOverlay() {
   overlay.classList.add("hidden");
   video.pause();
   video.removeAttribute("src");
+  image.removeAttribute("src");
+  image.classList.add("hidden");
   playerText.classList.add("hidden");
   currentMemoryId = "";
   currentMemoryNote = "";
