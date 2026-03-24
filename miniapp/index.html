@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memory Balls</title>
+    <link rel="stylesheet" href="/miniapp/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <h1>Biblioteka vospominaniy</h1>
+        <button id="refreshButton">Obnovit</button>
+      </header>
+
+      <section id="balls" class="balls"></section>
+
+      <div id="playerOverlay" class="overlay hidden">
+        <div class="projector">
+          <button id="closeButton" class="close">x</button>
+          <div class="vignette">
+            <video id="playerVideo" controls playsinline class="player hidden"></video>
+            <div id="playerText" class="player-text hidden"></div>
+          </div>
+          <p id="noteText" class="note"></p>
+        </div>
+      </div>
+    </div>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="/miniapp/app.js"></script>
+  </body>
+  </html>
