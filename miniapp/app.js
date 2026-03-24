@@ -10,6 +10,7 @@ const noteText = document.getElementById("noteText");
 let currentTelegramId = "";
 let rooms = [];
 let activeRoomId = "";
+const preferredRoomId = new URLSearchParams(window.location.search).get("roomId") || "";
 
 const COLOR_MAP = {
   yellow: "radial-gradient(circle at 30% 25%, #fff4b0, #ffda2f 45%, #e2b400)",
@@ -40,15 +41,16 @@ async function loadRooms() {
   const res = await fetch(`/api/rooms?telegramId=${encodeURIComponent(currentTelegramId)}`);
   const data = await res.json();
   rooms = data.rooms || [];
-  activeRoomId = data.activeRoomId || (rooms[0] ? rooms[0].id : "");
+  const fromUrl = rooms.find((r) => r.id === preferredRoomId);
+  activeRoomId = (fromUrl && fromUrl.id) || data.activeRoomId || (rooms[0] ? rooms[0].id : "");
   renderRoomSelect();
 }
 
 function renderRoomSelect() {
   roomSelect.innerHTML = "";
   if (!rooms.length) {
-    roomSelect.innerHTML = `<option value="">No rooms</option>`;
-    roomInfo.textContent = "Sozday komnatu v bote: /room_create Family";
+    roomSelect.innerHTML = `<option value="">Нет комнат</option>`;
+    roomInfo.textContent = "Создайте комнату в боте";
     return;
   }
   for (const room of rooms) {
@@ -60,8 +62,8 @@ function renderRoomSelect() {
   }
   const activeRoom = rooms.find((r) => r.id === activeRoomId);
   roomInfo.textContent = activeRoom
-    ? `Aktivnaya komnata: ${activeRoom.title} (${activeRoom.role})`
-    : "Vyberi komnatu";
+    ? `Активная комната: ${activeRoom.title} (${activeRoom.role})`
+    : "Выберите комнату";
 }
 
 async function loadMemories() {
@@ -79,7 +81,7 @@ async function loadMemories() {
 function renderBalls(memories) {
   ballsContainer.innerHTML = "";
   if (!memories.length) {
-    ballsContainer.innerHTML = "<p>Poka net vospominaniy. Otprav video botu.</p>";
+    ballsContainer.innerHTML = "<p>Пока нет воспоминаний.</p>";
     return;
   }
 
@@ -90,7 +92,7 @@ function renderBalls(memories) {
     const ball = document.createElement("button");
     ball.className = "ball";
     ball.style.background = COLOR_MAP[memory.color] || COLOR_MAP.yellow;
-    ball.title = memory.note || "Memory";
+    ball.title = memory.note || "Воспоминание";
     ball.addEventListener("click", () => onBallClick(ball, memory.id));
 
     const meta = document.createElement("p");
@@ -117,7 +119,7 @@ async function onBallClick(ballElement, memoryId) {
     video.pause();
     video.removeAttribute("src");
     video.classList.add("hidden");
-    playerText.textContent = data.note || "Tekstovoe vospominanie";
+    playerText.textContent = data.note || "Текстовое воспоминание";
     playerText.classList.remove("hidden");
     return;
   }
@@ -156,7 +158,7 @@ if (window.Telegram && window.Telegram.WebApp) {
 async function boot() {
   currentTelegramId = detectTelegramId();
   if (!currentTelegramId) {
-    roomInfo.textContent = "Open mini app from Telegram bot";
+    roomInfo.textContent = "Откройте мини-приложение из Telegram-бота";
     renderBalls([]);
     return;
   }

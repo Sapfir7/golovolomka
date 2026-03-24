@@ -27,14 +27,16 @@
 - `HOST` (optional): defaults to `0.0.0.0`.
 
 ## Current bot behavior
-- `/start` sends one WebApp button: `Otkryt biblioteku (WebApp)`.
-- `/miniapp` returns direct link to mini app (text + URL button).
-- `/room_create <name>` creates room (owner limit: 10 rooms).
-- `/rooms`, `/room_use <room_id>`, `/room_members`.
-- `/room_invite viewer|editor` creates invite link with permissions.
-- `/room_role <telegram_id> viewer|editor` (owner only).
-- Media caption format for color tagging: `color|note`
-  - Allowed colors: `yellow`, `blue`, `red`, `green`, `purple`.
+- `/start` shows one main button: `Мои комнаты`.
+- `Мои комнаты` opens list of rooms and button `Добавить комнату`.
+- Room click opens action buttons:
+  - `Добавить воспоминание`
+  - `Пригласить для просмотра`
+  - `Пригласить с редактированием`
+  - `Посмотреть комнату`
+- Room creation is step-based with duplicate-name validation.
+- Memory creation is step-based: choose color, then send media/text.
+- Invite links use role assignment (`viewer` or `editor`).
 
 ## Data model (high level)
 - `users`: Telegram users.

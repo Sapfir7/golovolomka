@@ -168,6 +168,15 @@ async function getActiveRoom(userId) {
 }
 
 async function createRoom(ownerUserId, title) {
+  const normalizedTitle = title.trim();
+  const duplicate = await pool.query(
+    "SELECT 1 FROM rooms WHERE owner_user_id = $1 AND LOWER(title) = LOWER($2) LIMIT 1",
+    [ownerUserId, normalizedTitle]
+  );
+  if (duplicate.rowCount > 0) {
+    throw new Error("ROOM_NAME_EXISTS");
+  }
+
   const countRes = await pool.query("SELECT COUNT(*)::int AS c FROM rooms WHERE owner_user_id = $1", [
     ownerUserId
   ]);
@@ -178,7 +187,7 @@ async function createRoom(ownerUserId, title) {
   const roomId = uuidv4();
   await pool.query("INSERT INTO rooms(id, title, owner_user_id) VALUES ($1, $2, $3)", [
     roomId,
-    title,
+    normalizedTitle,
     ownerUserId
   ]);
   await pool.query(
@@ -205,82 +214,75 @@ let botUsername = process.env.BOT_USERNAME || "";
 
 const bot = new Telegraf(BOT_TOKEN);
 let botRunning = false;
+const userFlowState = new Map();
 const MENU = {
-  CREATE_ROOM: "➕ Sozdat komnatu",
-  MY_ROOMS: "📂 Moi komnaty",
-  MEMBERS: "👥 Uchastniki",
-  INVITE_VIEWER: "🔗 Invite Viewer",
-  INVITE_EDITOR: "✍️ Invite Editor",
-  OPEN_APP: "🎞 Otkryt biblioteku"
+  MY_ROOMS: "📂 Мои комнаты"
 };
 
-function mainMenuKeyboard() {
-  return Markup.keyboard([
-    [MENU.CREATE_ROOM, MENU.MY_ROOMS],
-    [MENU.MEMBERS],
-    [MENU.INVITE_VIEWER, MENU.INVITE_EDITOR],
-    [MENU.OPEN_APP]
-  ]).resize();
+function startKeyboard() {
+  return Markup.keyboard([[MENU.MY_ROOMS]]).resize();
+}
+
+function colorLabel(color) {
+  const map = {
+    yellow: "Жёлтый (радость)",
+    blue: "Синий (грусть)",
+    red: "Красный (злость)",
+    purple: "Фиолетовый (тревога)"
+  };
+  return map[color] || color;
 }
 
 async function sendMainMenu(ctx, text) {
-  await ctx.reply(text, mainMenuKeyboard());
+  await ctx.reply(text, startKeyboard());
 }
 
 async function showRooms(ctx, user) {
   const rooms = await getRoomsForUser(user.id);
-  if (!rooms.length) {
-    await sendMainMenu(ctx, "U tebya net komnat. Nazhmi '➕ Sozdat komnatu'.");
-    return;
-  }
   const active = await getActiveRoom(user.id);
-  const lines = rooms.map((room) => {
-    const marker = active && active.id === room.id ? " *active*" : "";
-    return `- ${room.title} (${room.role})\n  id: ${room.id}${marker}`;
-  });
   const buttons = rooms.map((room) => [
     Markup.button.callback(
-      `${active && active.id === room.id ? "✅" : "➡️"} ${room.title} (${room.role})`,
-      `room_use:${room.id}`
+      `${active && active.id === room.id ? "✅ " : ""}${room.title} (${room.role})`,
+      `room_select:${room.id}`
     )
   ]);
-  await ctx.reply(`Tvoi komnaty:\n${lines.join("\n")}`, Markup.inlineKeyboard(buttons));
+  buttons.push([Markup.button.callback("➕ Добавить комнату", "room_add")]);
+  const text = rooms.length
+    ? "Ваши комнаты. Нажмите на комнату:"
+    : "У вас пока нет комнат. Нажмите «Добавить комнату».";
+  await ctx.reply(text, Markup.inlineKeyboard(buttons));
 }
 
-async function showMembers(ctx, user) {
-  const activeRoom = await getActiveRoom(user.id);
-  if (!activeRoom) {
-    await ctx.reply("Aktivnaya komnata ne naidena.");
-    return;
-  }
-  const member = await getMembership(user.id, activeRoom.id);
-  if (!member) {
-    await ctx.reply("Ty ne uchastnik etoy komnaty.");
-    return;
-  }
-  const rows = await pool.query(
-    `SELECT u.telegram_id, u.username, u.first_name, rm.role
-     FROM room_members rm
-     JOIN users u ON u.id = rm.user_id
-     WHERE rm.room_id = $1
-     ORDER BY rm.created_at ASC`,
-    [activeRoom.id]
+async function showRoomActions(ctx, user, roomId) {
+  const roomRes = await pool.query(
+    `SELECT r.id, r.title, rm.role
+     FROM rooms r
+     JOIN room_members rm ON rm.room_id = r.id
+     WHERE r.id = $1 AND rm.user_id = $2`,
+    [roomId, user.id]
   );
-  const text = rows.rows
-    .map((r) => `- ${r.first_name || r.username || r.telegram_id} (${r.role}) id:${r.telegram_id}`)
-    .join("\n");
-  await ctx.reply(`Uchastniki "${activeRoom.title}":\n${text}`);
-}
-
-async function createInviteForRole(ctx, user, role) {
-  const activeRoom = await getActiveRoom(user.id);
-  if (!activeRoom) {
-    await ctx.reply("Snachala sozday komnatu: /room_create Family");
+  if (roomRes.rowCount === 0) {
+    await ctx.reply("Комната не найдена или нет доступа.");
     return;
   }
-  const member = await getMembership(user.id, activeRoom.id);
+  const room = roomRes.rows[0];
+  await setActiveRoom(user.id, room.id);
+  await ctx.reply(
+    `Комната: ${room.title}\nВаша роль: ${room.role}`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback("➕ Добавить воспоминание", `room_add_memory:${room.id}`)],
+      [Markup.button.callback("🔗 Пригласить для просмотра", `room_invite:${room.id}:viewer`)],
+      [Markup.button.callback("✍️ Пригласить с редактированием", `room_invite:${room.id}:editor`)],
+      [Markup.button.webApp("🎞 Посмотреть комнату", `${BASE_URL}/miniapp?roomId=${room.id}`)],
+      [Markup.button.callback("⬅️ Назад к комнатам", "rooms_open")]
+    ])
+  );
+}
+
+async function createInviteForRole(ctx, user, roomId, role) {
+  const member = await getMembership(user.id, roomId);
   if (!member || (!member.can_invite && member.role !== "owner")) {
-    await ctx.reply("U tebya net prav sozdavat invite v etoy komnate.");
+    await ctx.reply("У вас нет прав создавать приглашения в этой комнате.");
     return;
   }
   const token = crypto.randomBytes(12).toString("hex");
@@ -288,11 +290,12 @@ async function createInviteForRole(ctx, user, role) {
   await pool.query(
     `INSERT INTO invites(id, room_id, token, created_by_user_id, role, expires_at)
      VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '30 days')`,
-    [inviteId, activeRoom.id, token, user.id, role]
+    [inviteId, roomId, token, user.id, role]
   );
   const username = botUsername || "Library_of_memories_bot";
   const link = `https://t.me/${username}?start=join_${token}`;
-  await ctx.reply(`Invite sozdana (${role}).\n${link}`);
+  const roleText = role === "editor" ? "просмотр + редактирование" : "только просмотр";
+  await ctx.reply(`Ссылка-приглашение (${roleText}):\n${link}`);
 }
 
 bot.catch((err) => {
@@ -302,6 +305,7 @@ bot.catch((err) => {
 bot.start(async (ctx) => {
   const user = await getOrCreateUser(ctx.from);
   const payload = ctx.startPayload || "";
+  userFlowState.delete(user.id);
   if (payload.startsWith("join_")) {
     const token = payload.slice(5);
     const inviteRes = await pool.query(
@@ -312,12 +316,12 @@ bot.start(async (ctx) => {
       [token]
     );
     if (inviteRes.rowCount === 0) {
-      await ctx.reply("Invite ssylka ne naidena.");
+      await ctx.reply("Ссылка-приглашение не найдена.");
     } else {
       const invite = inviteRes.rows[0];
       const expired = invite.expires_at && new Date(invite.expires_at) < new Date();
       if (!invite.is_active || expired || invite.used_count >= invite.max_uses) {
-        await ctx.reply("Invite ssylka prosrochena ili uzhe neaktivna.");
+        await ctx.reply("Ссылка-приглашение просрочена или уже неактивна.");
       } else {
         await pool.query(
           `INSERT INTO room_members(room_id, user_id, role, can_invite)
@@ -328,40 +332,20 @@ bot.start(async (ctx) => {
         );
         await pool.query("UPDATE invites SET used_count = used_count + 1 WHERE id = $1", [invite.id]);
         await setActiveRoom(user.id, invite.room_id);
-        await ctx.reply(`Ty prisoedinilsya k komnate "${invite.title}" kak ${invite.role}.`);
+        await ctx.reply(`Вы присоединились к комнате «${invite.title}» с ролью ${invite.role}.`);
       }
     }
   }
-
-  const text =
-    "Privet! Ya bot biblioteki vospominaniy.\n\n" +
-    "Komandy:\n" +
-    "/room_create Nazvanie - sozdat komnatu (max 10)\n" +
-    "/rooms - spisok komnat\n" +
-    "/room_use ROOM_ID - vybrat aktivnuyu komnatu\n" +
-    "/room_invite viewer|editor - ssylka-priglashenie s pravami\n" +
-    "/room_members - uchastniki aktivnoy komnaty\n" +
-    "/room_role TELEGRAM_ID viewer|editor - izmenit prava (tolko owner)\n\n" +
-    "Otprav media ili text: ono sohranitsya v aktivnuyu komnatu.";
-
-  await ctx.reply(
-    text + "\n\nIspolzuy knopki menyu nizhe.",
-    Markup.inlineKeyboard([[Markup.button.webApp("Otkryt biblioteku (WebApp)", `${BASE_URL}/miniapp`)]])
+  await sendMainMenu(
+    ctx,
+    "Добро пожаловать в библиотеку воспоминаний.\nНажмите «Мои комнаты», чтобы продолжить."
   );
-  await sendMainMenu(ctx, "Glavnoe menu dostupno.");
 });
 
 bot.command("miniapp", async (ctx) => {
   await ctx.reply(
-    `Pryamaya ssylka na mini app: ${BASE_URL}/miniapp`,
-    Markup.inlineKeyboard([[Markup.button.url("Open mini app", `${BASE_URL}/miniapp`)]])
-  );
-});
-
-bot.hears(MENU.OPEN_APP, async (ctx) => {
-  await ctx.reply(
-    "Otkryvayu mini app.",
-    Markup.inlineKeyboard([[Markup.button.webApp("Otkryt biblioteku (WebApp)", `${BASE_URL}/miniapp`)]])
+    "Открыть мини-приложение:",
+    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть библиотеку", `${BASE_URL}/miniapp`)]])
   );
 });
 
@@ -369,15 +353,20 @@ bot.command("room_create", async (ctx) => {
   const user = await getOrCreateUser(ctx.from);
   const title = (ctx.message.text || "").replace("/room_create", "").trim();
   if (!title) {
-    await ctx.reply("Primer: /room_create Family");
+    await ctx.reply("Пример: /room_create Семья");
     return;
   }
   try {
-    const roomId = await createRoom(user.id, title);
-    await ctx.reply(`Komnata sozdana: "${title}"\nID: ${roomId}\nTeper eto aktivnaya komnata.`);
+    await createRoom(user.id, title);
+    await ctx.reply(`Комната «${title}» создана.`);
+    await showRooms(ctx, user);
   } catch (error) {
     if (error.message === "LIMIT_10_ROOMS") {
-      await ctx.reply("Dostignut limit: maksimum 10 komnat na owner.");
+      await ctx.reply("Достигнут лимит: максимум 10 комнат.");
+      return;
+    }
+    if (error.message === "ROOM_NAME_EXISTS") {
+      await ctx.reply("Комната с таким названием уже существует.");
       return;
     }
     throw error;
@@ -393,44 +382,42 @@ bot.command("room_use", async (ctx) => {
   const user = await getOrCreateUser(ctx.from);
   const roomId = (ctx.message.text || "").replace("/room_use", "").trim();
   if (!roomId) {
-    await ctx.reply("Primer: /room_use ROOM_ID");
+    await ctx.reply("Пример: /room_use ROOM_ID");
     return;
   }
   const member = await getMembership(user.id, roomId);
   if (!member) {
-    await ctx.reply("Ty ne uchastnik etoy komnaty.");
+    await ctx.reply("Вы не участник этой комнаты.");
     return;
   }
-  await setActiveRoom(user.id, roomId);
-  await sendMainMenu(ctx, `Aktivnaya komnata: ${roomId}`);
+  await showRoomActions(ctx, user, roomId);
 });
 
-bot.action(/^room_use:(.+)$/, async (ctx) => {
+bot.action(/^room_select:(.+)$/, async (ctx) => {
   const roomId = ctx.match[1];
   const user = await getOrCreateUser(ctx.from);
   const member = await getMembership(user.id, roomId);
   if (!member) {
-    await ctx.answerCbQuery("Net dostupa");
+    await ctx.answerCbQuery("Нет доступа");
     return;
   }
-  await setActiveRoom(user.id, roomId);
-  await ctx.answerCbQuery("Komnata vybrana");
-  await ctx.reply(`Aktivnaya komnata: ${roomId}`, mainMenuKeyboard());
+  await ctx.answerCbQuery("Комната выбрана");
+  await showRoomActions(ctx, user, roomId);
 });
 
 bot.command("room_invite", async (ctx) => {
   const user = await getOrCreateUser(ctx.from);
   const role = (ctx.message.text || "").replace("/room_invite", "").trim().toLowerCase();
   if (!["viewer", "editor"].includes(role)) {
-    await ctx.reply("Primer: /room_invite viewer\nIli: /room_invite editor");
+    await ctx.reply("Пример: /room_invite viewer или /room_invite editor");
     return;
   }
-  await createInviteForRole(ctx, user, role);
-});
-
-bot.command("room_members", async (ctx) => {
-  const user = await getOrCreateUser(ctx.from);
-  await showMembers(ctx, user);
+  const activeRoom = await getActiveRoom(user.id);
+  if (!activeRoom) {
+    await ctx.reply("Сначала выберите комнату через «Мои комнаты».");
+    return;
+  }
+  await createInviteForRole(ctx, user, activeRoom.id, role);
 });
 
 bot.hears(MENU.MY_ROOMS, async (ctx) => {
@@ -438,25 +425,57 @@ bot.hears(MENU.MY_ROOMS, async (ctx) => {
   await showRooms(ctx, user);
 });
 
-bot.hears(MENU.MEMBERS, async (ctx) => {
+bot.action("rooms_open", async (ctx) => {
   const user = await getOrCreateUser(ctx.from);
-  await showMembers(ctx, user);
+  await ctx.answerCbQuery();
+  await showRooms(ctx, user);
 });
 
-bot.hears(MENU.INVITE_VIEWER, async (ctx) => {
+bot.action("room_add", async (ctx) => {
   const user = await getOrCreateUser(ctx.from);
-  await createInviteForRole(ctx, user, "viewer");
+  userFlowState.set(user.id, { step: "await_room_name" });
+  await ctx.answerCbQuery();
+  await ctx.reply("Введите название комнаты:");
 });
 
-bot.hears(MENU.INVITE_EDITOR, async (ctx) => {
+bot.action(/^room_invite:([^:]+):(viewer|editor)$/, async (ctx) => {
+  const roomId = ctx.match[1];
+  const role = ctx.match[2];
   const user = await getOrCreateUser(ctx.from);
-  await createInviteForRole(ctx, user, "editor");
+  await ctx.answerCbQuery();
+  await createInviteForRole(ctx, user, roomId, role);
 });
 
-bot.hears(MENU.CREATE_ROOM, async (ctx) => {
-  await sendMainMenu(
-    ctx,
-    "Napishi komandoy:\n/room_create Nazvanie\n\nPrimer:\n/room_create Family"
+bot.action(/^room_add_memory:(.+)$/, async (ctx) => {
+  const roomId = ctx.match[1];
+  const user = await getOrCreateUser(ctx.from);
+  const member = await getMembership(user.id, roomId);
+  if (!member || !roleCanWrite(member.role)) {
+    await ctx.answerCbQuery("Нет прав");
+    await ctx.reply("У вас нет прав на добавление в этой комнате.");
+    return;
+  }
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    "Выберите цвет воспоминания:",
+    Markup.inlineKeyboard([
+      [Markup.button.callback("Жёлтый (радость)", `mem_color:${roomId}:yellow`)],
+      [Markup.button.callback("Синий (грусть)", `mem_color:${roomId}:blue`)],
+      [Markup.button.callback("Красный (злость)", `mem_color:${roomId}:red`)],
+      [Markup.button.callback("Фиолетовый (тревога)", `mem_color:${roomId}:purple`)]
+    ])
+  );
+});
+
+bot.action(/^mem_color:([^:]+):(yellow|blue|red|purple)$/, async (ctx) => {
+  const roomId = ctx.match[1];
+  const color = ctx.match[2];
+  const user = await getOrCreateUser(ctx.from);
+  userFlowState.set(user.id, { step: "await_memory_content", roomId, color });
+  await setActiveRoom(user.id, roomId);
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    `Цвет выбран: ${colorLabel(color)}.\nТеперь отправьте фото, видео или текст воспоминания.\nМожно добавить подпись к медиа.`
   );
 });
 
@@ -508,21 +527,22 @@ function parseCaption(caption) {
 
 bot.on(["video", "photo"], async (ctx) => {
   const user = await getOrCreateUser(ctx.from || {});
-  const activeRoom = await getActiveRoom(user.id);
+  const state = userFlowState.get(user.id);
+  const roomId = state?.step === "await_memory_content" ? state.roomId : null;
+  const activeRoom = roomId ? { id: roomId, title: null } : await getActiveRoom(user.id);
   if (!activeRoom) {
-    await ctx.reply("Snachala sozday komnatu: /room_create Family");
+    await ctx.reply("Сначала выберите комнату в «Мои комнаты».");
     return;
   }
   const membership = await getMembership(user.id, activeRoom.id);
   if (!membership || !roleCanWrite(membership.role)) {
-    await ctx.reply("U tebya net prav dobavlyat vospominaniya v etu komnatu.");
+    await ctx.reply("У вас нет прав добавлять воспоминания в эту комнату.");
     return;
   }
 
   const caption = ctx.message.caption || "";
   const parsed = parseCaption(caption);
-  const allowedColors = new Set(["yellow", "blue", "red", "green", "purple"]);
-  const color = allowedColors.has(parsed.color) ? parsed.color : "yellow";
+  const color = state?.step === "await_memory_content" ? state.color : parsed.color || "yellow";
 
   let mediaType = "video";
   let fileId = "";
@@ -538,12 +558,13 @@ bot.on(["video", "photo"], async (ctx) => {
   await pool.query(
     `INSERT INTO memories(id, room_id, author_user_id, color, note, media_type, file_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [uuidv4(), activeRoom.id, user.id, color, parsed.note, mediaType, fileId]
+    [uuidv4(), activeRoom.id, user.id, color, parsed.note || "", mediaType, fileId]
   );
+  userFlowState.delete(user.id);
 
   await ctx.reply(
-    `Sohraneno v komnatu "${activeRoom.title}" (${color}).`,
-    Markup.inlineKeyboard([[Markup.button.webApp("Otkryt biblioteku (WebApp)", `${BASE_URL}/miniapp`)]])
+    `Воспоминание сохранено (${colorLabel(color)}).`,
+    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp?roomId=${activeRoom.id}`)]])
   );
 });
 
@@ -551,25 +572,55 @@ bot.on("text", async (ctx) => {
   const value = (ctx.message.text || "").trim();
   if (value.startsWith("/")) return;
   const user = await getOrCreateUser(ctx.from || {});
-  const activeRoom = await getActiveRoom(user.id);
+  const state = userFlowState.get(user.id);
+
+  if (state?.step === "await_room_name") {
+    if (value.length < 2 || value.length > 60) {
+      await ctx.reply("Название должно быть от 2 до 60 символов. Попробуйте ещё раз.");
+      return;
+    }
+    try {
+      await createRoom(user.id, value);
+      userFlowState.delete(user.id);
+      await ctx.reply(`Комната «${value}» создана.`);
+      await showRooms(ctx, user);
+    } catch (error) {
+      if (error.message === "LIMIT_10_ROOMS") {
+        await ctx.reply("Достигнут лимит: максимум 10 комнат.");
+        return;
+      }
+      if (error.message === "ROOM_NAME_EXISTS") {
+        await ctx.reply("Комната с таким названием уже есть. Введите другое название.");
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
+  const roomId = state?.step === "await_memory_content" ? state.roomId : null;
+  const activeRoom = roomId ? { id: roomId, title: null } : await getActiveRoom(user.id);
   if (!activeRoom) {
-    await ctx.reply("Snachala sozday komnatu: /room_create Family");
+    await ctx.reply("Сначала выберите комнату в «Мои комнаты».");
     return;
   }
   const membership = await getMembership(user.id, activeRoom.id);
   if (!membership || !roleCanWrite(membership.role)) {
-    await ctx.reply("U tebya net prav dobavlyat vospominaniya v etu komnatu.");
+    await ctx.reply("У вас нет прав добавлять воспоминания в эту комнату.");
     return;
   }
   const parsed = parseCaption(value);
-  const allowedColors = new Set(["yellow", "blue", "red", "green", "purple"]);
-  const color = allowedColors.has(parsed.color) ? parsed.color : "yellow";
+  const color = state?.step === "await_memory_content" ? state.color : parsed.color || "yellow";
   await pool.query(
     `INSERT INTO memories(id, room_id, author_user_id, color, note, media_type, file_id)
      VALUES ($1, $2, $3, $4, $5, 'text', '')`,
     [uuidv4(), activeRoom.id, user.id, color, parsed.note || value]
   );
-  await ctx.reply(`Tekstovoe vospominanie sohraneno v "${activeRoom.title}".`);
+  userFlowState.delete(user.id);
+  await ctx.reply(
+    `Текстовое воспоминание сохранено (${colorLabel(color)}).`,
+    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp?roomId=${activeRoom.id}`)]])
+  );
 });
 
 const MINIAPP_DIR = path.join(__dirname, "miniapp");

@@ -1,9 +1,9 @@
 # Golovolomka Memory Bot
 
 Telegram bot + Mini App with rooms and role-based access:
-- room model (family/friends/etc), up to 10 owner rooms
-- invite links with permission (`viewer` or `editor`)
-- room-based memories with colored balls UI
+- комнаты (семья/друзья и т.д.), до 10 у владельца
+- инвайт-ссылки с правами (`viewer` или `editor`)
+- воспоминания по комнатам в интерфейсе шариков
 - PostgreSQL storage (reliable for production)
 
 ## 1) Ustanovka
@@ -29,17 +29,17 @@ npm install
 npm start
 ```
 
-## 4) Komandy bota
+## 4) Сценарий в боте
 
-- `/room_create Family`
-- `/rooms`
-- `/room_use ROOM_ID`
-- `/room_invite viewer` или `/room_invite editor`
-- `/room_members`
-- `/room_role TELEGRAM_ID viewer|editor` (owner only)
-
-Для добавления воспоминаний отправляй видео/фото/текст в активную комнату.
-Подпись можно задавать в формате: `yellow|Nasha progulka`.
+- `/start` -> кнопка `Мои комнаты`
+- в `Мои комнаты`:
+  - список комнат
+  - кнопка `Добавить комнату`
+- после выбора комнаты:
+  - `Добавить воспоминание`
+  - `Пригласить для просмотра`
+  - `Пригласить с редактированием`
+  - `Посмотреть комнату` (миниапп сразу в этой комнате)
 
 ## Primichaniya
 
