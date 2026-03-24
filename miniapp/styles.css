@@ -203,6 +203,20 @@ button {
   opacity: 0.95;
 }
 
+.memory-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.action-btn {
+  background: #3e4e86;
+}
+
+.action-btn.danger {
+  background: #8f2f42;
+}
+
 .hidden {
   display: none !important;
 }

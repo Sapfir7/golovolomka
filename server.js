@@ -77,11 +77,16 @@ async function initDb() {
       note TEXT,
       media_type TEXT NOT NULL CHECK (media_type IN ('video', 'photo', 'text')),
       file_id TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     CREATE INDEX IF NOT EXISTS idx_memories_room_created_at ON memories(room_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON room_members(user_id);
+  `);
+  await pool.query(`
+    ALTER TABLE memories
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
   `);
 }
 
@@ -701,6 +706,40 @@ app.get("/api/memory/:id/playback", async (req, res) => {
   } catch (error) {
     return res.status(500).json({ error: "Cannot get media url from Telegram" });
   }
+});
+
+app.patch("/api/memory/:id", async (req, res) => {
+  const telegramId = String(req.query.telegramId || "");
+  const note = String(req.body.note || "").trim();
+  if (!telegramId) return res.status(400).json({ error: "telegramId is required" });
+  if (note.length > 1200) return res.status(400).json({ error: "note is too long" });
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) return res.status(403).json({ error: "Forbidden" });
+
+  const result = await pool.query("SELECT * FROM memories WHERE id = $1", [req.params.id]);
+  if (result.rowCount === 0) return res.status(404).json({ error: "Memory not found" });
+  const memory = result.rows[0];
+  const member = await getMembership(user.id, memory.room_id);
+  if (!member || !roleCanWrite(member.role)) return res.status(403).json({ error: "Forbidden" });
+
+  await pool.query("UPDATE memories SET note = $1, updated_at = NOW() WHERE id = $2", [note, req.params.id]);
+  return res.json({ ok: true });
+});
+
+app.delete("/api/memory/:id", async (req, res) => {
+  const telegramId = String(req.query.telegramId || "");
+  if (!telegramId) return res.status(400).json({ error: "telegramId is required" });
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) return res.status(403).json({ error: "Forbidden" });
+
+  const result = await pool.query("SELECT * FROM memories WHERE id = $1", [req.params.id]);
+  if (result.rowCount === 0) return res.status(404).json({ error: "Memory not found" });
+  const memory = result.rows[0];
+  const member = await getMembership(user.id, memory.room_id);
+  if (!member || !roleCanWrite(member.role)) return res.status(403).json({ error: "Forbidden" });
+
+  await pool.query("DELETE FROM memories WHERE id = $1", [req.params.id]);
+  return res.json({ ok: true });
 });
 
 app.get("/", (req, res) => {

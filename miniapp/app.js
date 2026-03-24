@@ -7,10 +7,15 @@ const closeButton = document.getElementById("closeButton");
 const video = document.getElementById("playerVideo");
 const playerText = document.getElementById("playerText");
 const noteText = document.getElementById("noteText");
+const editNoteButton = document.getElementById("editNoteButton");
+const deleteMemoryButton = document.getElementById("deleteMemoryButton");
 let currentTelegramId = "";
 let rooms = [];
 let activeRoomId = "";
 const preferredRoomId = new URLSearchParams(window.location.search).get("roomId") || "";
+let currentMemoryId = "";
+let currentMemoryNote = "";
+let currentCanEdit = false;
 
 const COLOR_MAP = {
   yellow: "radial-gradient(circle at 30% 25%, #fff4b0, #ffda2f 45%, #e2b400)",
@@ -66,6 +71,12 @@ function renderRoomSelect() {
     : "Выберите комнату";
 }
 
+function canEditCurrentRoom() {
+  const room = rooms.find((r) => r.id === activeRoomId);
+  if (!room) return false;
+  return room.role === "owner" || room.role === "editor";
+}
+
 async function loadMemories() {
   if (!activeRoomId) {
     renderBalls([]);
@@ -111,9 +122,14 @@ async function onBallClick(ballElement, memoryId) {
 
   const res = await fetch(`/api/memory/${memoryId}/playback?telegramId=${encodeURIComponent(currentTelegramId)}`);
   const data = await res.json();
+  currentMemoryId = memoryId;
+  currentMemoryNote = data.note || "";
+  currentCanEdit = canEditCurrentRoom();
 
   overlay.classList.remove("hidden");
   noteText.textContent = data.note || "";
+  editNoteButton.classList.toggle("hidden", !currentCanEdit);
+  deleteMemoryButton.classList.toggle("hidden", !currentCanEdit);
 
   if (data.mediaType === "text") {
     video.pause();
@@ -135,6 +151,44 @@ function closeOverlay() {
   video.pause();
   video.removeAttribute("src");
   playerText.classList.add("hidden");
+  currentMemoryId = "";
+  currentMemoryNote = "";
+  currentCanEdit = false;
+  editNoteButton.classList.add("hidden");
+  deleteMemoryButton.classList.add("hidden");
+}
+
+async function editCurrentMemory() {
+  if (!currentCanEdit || !currentMemoryId) return;
+  const nextNote = window.prompt("Введите новый текст:", currentMemoryNote || "");
+  if (nextNote === null) return;
+  const res = await fetch(`/api/memory/${currentMemoryId}?telegramId=${encodeURIComponent(currentTelegramId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note: nextNote })
+  });
+  if (!res.ok) {
+    window.alert("Не удалось обновить текст");
+    return;
+  }
+  currentMemoryNote = nextNote;
+  noteText.textContent = nextNote;
+  await loadMemories();
+}
+
+async function deleteCurrentMemory() {
+  if (!currentCanEdit || !currentMemoryId) return;
+  const ok = window.confirm("Удалить это воспоминание? Это действие нельзя отменить.");
+  if (!ok) return;
+  const res = await fetch(`/api/memory/${currentMemoryId}?telegramId=${encodeURIComponent(currentTelegramId)}`, {
+    method: "DELETE"
+  });
+  if (!res.ok) {
+    window.alert("Не удалось удалить воспоминание");
+    return;
+  }
+  closeOverlay();
+  await loadMemories();
 }
 
 refreshButton.addEventListener("click", loadMemories);
@@ -144,6 +198,8 @@ roomSelect.addEventListener("change", async () => {
   await loadMemories();
 });
 closeButton.addEventListener("click", closeOverlay);
+editNoteButton.addEventListener("click", editCurrentMemory);
+deleteMemoryButton.addEventListener("click", deleteCurrentMemory);
 overlay.addEventListener("click", (event) => {
   if (event.target === overlay) {
     closeOverlay();
