@@ -3,7 +3,7 @@ services:
     name: golovolomka-bot
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && cd miniapp-3d && npm install && npm run build && cd ..
     startCommand: npm start
     envVars:
       - key: BOT_TOKEN

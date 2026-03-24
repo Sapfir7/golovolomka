@@ -283,7 +283,7 @@ async function showRoomActions(ctx, user, roomId) {
       [Markup.button.callback("➕ Добавить воспоминание", `room_add_memory:${room.id}`)],
       [Markup.button.callback("🔗 Пригласить для просмотра", `room_invite:${room.id}:viewer`)],
       [Markup.button.callback("✍️ Пригласить с редактированием", `room_invite:${room.id}:editor`)],
-      [Markup.button.webApp("🎞 Посмотреть комнату", `${BASE_URL}/miniapp?roomId=${room.id}`)],
+      [Markup.button.webApp("🎞 Посмотреть комнату", `${BASE_URL}/miniapp-3d/?roomId=${room.id}`)],
       [Markup.button.callback("⬅️ Назад к комнатам", "rooms_open")]
     ])
   );
@@ -582,7 +582,7 @@ bot.action("video_preview_auto", async (ctx) => {
   await ctx.answerCbQuery("Сохранено");
   await ctx.reply(
     "Видео сохранено. Установлено авто-превью (первый кадр).",
-    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp?roomId=${state.roomId}`)]])
+    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp-3d/?roomId=${state.roomId}`)]])
   );
 });
 
@@ -621,7 +621,7 @@ bot.on(["video", "photo"], async (ctx) => {
     await ctx.reply(
       "Видео сохранено. Использовано ваше превью.",
       Markup.inlineKeyboard([
-        [Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp?roomId=${state.roomId}`)]
+        [Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp-3d/?roomId=${state.roomId}`)]
       ])
     );
     return;
@@ -677,7 +677,7 @@ bot.on(["video", "photo"], async (ctx) => {
 
   await ctx.reply(
     `Воспоминание сохранено (${colorLabel(color)}).`,
-    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp?roomId=${activeRoom.id}`)]])
+    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp-3d/?roomId=${activeRoom.id}`)]])
   );
 });
 
@@ -740,7 +740,7 @@ bot.on("text", async (ctx) => {
   userFlowState.delete(user.id);
   await ctx.reply(
     `Текстовое воспоминание сохранено (${colorLabel(color)}).`,
-    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp?roomId=${activeRoom.id}`)]])
+    Markup.inlineKeyboard([[Markup.button.webApp("🎞 Открыть комнату", `${BASE_URL}/miniapp-3d/?roomId=${activeRoom.id}`)]])
   );
 });
 
@@ -752,6 +752,16 @@ app.get("/miniapp", (req, res) => {
 app.get("/miniapp/", (req, res) => {
   res.sendFile(path.join(MINIAPP_DIR, "index.html"));
 });
+
+// 3D Mini App (built Vite output served from miniapp-3d-dist)
+const MINIAPP3D_DIR = path.join(__dirname, "miniapp-3d-dist");
+if (require("fs").existsSync(MINIAPP3D_DIR)) {
+  app.use("/miniapp-3d", express.static(MINIAPP3D_DIR));
+  // SPA fallback — serve index.html for all /miniapp-3d/* routes
+  app.get("/miniapp-3d/*", (req, res) => {
+    res.sendFile(path.join(MINIAPP3D_DIR, "index.html"));
+  });
+}
 
 app.get("/api/rooms", async (req, res) => {
   const telegramId = String(req.query.telegramId || "");

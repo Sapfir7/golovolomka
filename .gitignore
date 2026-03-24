@@ -1,0 +1,6 @@
+.env
+data/
+node_modules/
+miniapp-3d/node_modules/
+# 3D build output is committed so Render can serve it without rebuilding locally
+# (render.yaml handles the build on Render)
