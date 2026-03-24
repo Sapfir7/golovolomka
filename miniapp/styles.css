@@ -28,6 +28,21 @@ body {
   gap: 12px;
 }
 
+.controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.controls select {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #222a4a;
+  color: #fff;
+  min-width: 180px;
+}
+
 .topbar h1 {
   margin: 0;
   font-size: 20px;
@@ -47,6 +62,12 @@ button {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
   gap: 14px;
+}
+
+.room-info {
+  margin: 8px 0 0;
+  opacity: 0.85;
+  font-size: 14px;
 }
 
 .ball-wrap {

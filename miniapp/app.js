@@ -1,10 +1,15 @@
 const ballsContainer = document.getElementById("balls");
 const refreshButton = document.getElementById("refreshButton");
+const roomSelect = document.getElementById("roomSelect");
+const roomInfo = document.getElementById("roomInfo");
 const overlay = document.getElementById("playerOverlay");
 const closeButton = document.getElementById("closeButton");
 const video = document.getElementById("playerVideo");
 const playerText = document.getElementById("playerText");
 const noteText = document.getElementById("noteText");
+let currentTelegramId = "";
+let rooms = [];
+let activeRoomId = "";
 
 const COLOR_MAP = {
   yellow: "radial-gradient(circle at 30% 25%, #fff4b0, #ffda2f 45%, #e2b400)",
@@ -22,8 +27,51 @@ function formatDate(isoDate) {
   }
 }
 
+function detectTelegramId() {
+  if (window.Telegram && window.Telegram.WebApp) {
+    const user = window.Telegram.WebApp.initDataUnsafe?.user;
+    if (user?.id) return String(user.id);
+  }
+  const urlUser = new URLSearchParams(window.location.search).get("telegramId");
+  return urlUser || "";
+}
+
+async function loadRooms() {
+  const res = await fetch(`/api/rooms?telegramId=${encodeURIComponent(currentTelegramId)}`);
+  const data = await res.json();
+  rooms = data.rooms || [];
+  activeRoomId = data.activeRoomId || (rooms[0] ? rooms[0].id : "");
+  renderRoomSelect();
+}
+
+function renderRoomSelect() {
+  roomSelect.innerHTML = "";
+  if (!rooms.length) {
+    roomSelect.innerHTML = `<option value="">No rooms</option>`;
+    roomInfo.textContent = "Sozday komnatu v bote: /room_create Family";
+    return;
+  }
+  for (const room of rooms) {
+    const option = document.createElement("option");
+    option.value = room.id;
+    option.textContent = `${room.title} (${room.role})`;
+    if (room.id === activeRoomId) option.selected = true;
+    roomSelect.appendChild(option);
+  }
+  const activeRoom = rooms.find((r) => r.id === activeRoomId);
+  roomInfo.textContent = activeRoom
+    ? `Aktivnaya komnata: ${activeRoom.title} (${activeRoom.role})`
+    : "Vyberi komnatu";
+}
+
 async function loadMemories() {
-  const res = await fetch("/api/memories");
+  if (!activeRoomId) {
+    renderBalls([]);
+    return;
+  }
+  const res = await fetch(
+    `/api/memories?telegramId=${encodeURIComponent(currentTelegramId)}&roomId=${encodeURIComponent(activeRoomId)}`
+  );
   const data = await res.json();
   renderBalls(data.memories || []);
 }
@@ -59,7 +107,7 @@ async function onBallClick(ballElement, memoryId) {
   ballElement.classList.add("animating");
   setTimeout(() => ballElement.classList.remove("animating"), 530);
 
-  const res = await fetch(`/api/memory/${memoryId}/playback`);
+  const res = await fetch(`/api/memory/${memoryId}/playback?telegramId=${encodeURIComponent(currentTelegramId)}`);
   const data = await res.json();
 
   overlay.classList.remove("hidden");
@@ -88,6 +136,11 @@ function closeOverlay() {
 }
 
 refreshButton.addEventListener("click", loadMemories);
+roomSelect.addEventListener("change", async () => {
+  activeRoomId = roomSelect.value;
+  renderRoomSelect();
+  await loadMemories();
+});
 closeButton.addEventListener("click", closeOverlay);
 overlay.addEventListener("click", (event) => {
   if (event.target === overlay) {
@@ -100,4 +153,15 @@ if (window.Telegram && window.Telegram.WebApp) {
   window.Telegram.WebApp.expand();
 }
 
-loadMemories();
+async function boot() {
+  currentTelegramId = detectTelegramId();
+  if (!currentTelegramId) {
+    roomInfo.textContent = "Open mini app from Telegram bot";
+    renderBalls([]);
+    return;
+  }
+  await loadRooms();
+  await loadMemories();
+}
+
+boot();

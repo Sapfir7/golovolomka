@@ -8,7 +8,7 @@
 ## Current stack
 - Backend: `Node.js + Express + Telegraf`
 - Frontend Mini App: static HTML/CSS/JS in `miniapp/`
-- Storage: local JSON file `data/memories.json` (MVP only)
+- Storage: PostgreSQL (`DATABASE_URL`)
 - Deploy: Render Web Service
 
 ## Key files
@@ -22,20 +22,32 @@
 - `BOT_TOKEN` (required): Telegram bot token.
 - `BASE_URL` (required in production): public HTTPS service URL (without trailing slash).
   - Example: `https://golovolomka-bot.onrender.com`
+- `DATABASE_URL` (required): Postgres connection string.
 - `PORT`: provided by Render (`10000` on free plan is typical).
 - `HOST` (optional): defaults to `0.0.0.0`.
 
 ## Current bot behavior
 - `/start` sends one WebApp button: `Otkryt biblioteku (WebApp)`.
 - `/miniapp` returns direct link to mini app (text + URL button).
+- `/room_create <name>` creates room (owner limit: 10 rooms).
+- `/rooms`, `/room_use <room_id>`, `/room_members`.
+- `/room_invite viewer|editor` creates invite link with permissions.
+- `/room_role <telegram_id> viewer|editor` (owner only).
 - Media caption format for color tagging: `color|note`
   - Allowed colors: `yellow`, `blue`, `red`, `green`, `purple`.
 
-## Known MVP limitations
-- JSON storage is ephemeral on Render free instances (disk not durable).
-- No auth model for shared private libraries yet.
-- No pagination, no deletion/editing memories.
-- No permanent media storage (uses Telegram `file_id` only).
+## Data model (high level)
+- `users`: Telegram users.
+- `rooms`: memory rooms.
+- `room_members`: membership with roles (`owner/editor/viewer`) and invite permission.
+- `invites`: tokenized join links with role assignment.
+- `user_prefs`: active room per user.
+- `memories`: room-bound memories.
+
+## Known limitations
+- Mini App access check uses `telegramId` from WebApp context (lightweight, not full signature verification yet).
+- No deletion/editing UI for memories yet.
+- Media still referenced by Telegram `file_id` (no external backup).
 
 ## Why white screen / not found happened before
 - Wrong `BASE_URL` domain in env.

@@ -1,10 +1,10 @@
-# Golovolomka Memory Bot (MVP)
+# Golovolomka Memory Bot
 
-Prostoy prototip:
-- Telegram bot prinimaet video/photo/text
-- zapisivaet "vospominaniya" v JSON
-- mini app pokazyvaet shariki po cvetu
-- po nazhatiyu na sharik otkryvaetsya proigryvanie
+Telegram bot + Mini App with rooms and role-based access:
+- room model (family/friends/etc), up to 10 owner rooms
+- invite links with permission (`viewer` or `editor`)
+- room-based memories with colored balls UI
+- PostgreSQL storage (reliable for production)
 
 ## 1) Ustanovka
 
@@ -18,6 +18,7 @@ npm install
 2. Zapolni:
    - `BOT_TOKEN` - token bota iz BotFather
    - `BASE_URL` - public URL, naprimer `https://your-domain.com`
+   - `DATABASE_URL` - postgres connection string
    - `PORT` - po umolchaniyu `3000`
 
 > Dlya Telegram WebApp nuzhen dostupnyy iz interneta URL (https). Lokalno mozhno testit cherez tunnel (ngrok/cloudflared).
@@ -28,16 +29,19 @@ npm install
 npm start
 ```
 
-## 4) Kak polzovatsya
+## 4) Komandy bota
 
-1. Napishi botu `/start`
-2. Otprav video/photo s podpisyu v formate:
-   - `yellow|Nasha progulka`
-   - dopustimye cveta: `yellow`, `blue`, `red`, `green`, `purple`
-3. Nazhmi `Otkryt biblioteku`
-4. Klik po shariku -> video/text v "proektore"
+- `/room_create Family`
+- `/rooms`
+- `/room_use ROOM_ID`
+- `/room_invite viewer` или `/room_invite editor`
+- `/room_members`
+- `/room_role TELEGRAM_ID viewer|editor` (owner only)
+
+Для добавления воспоминаний отправляй видео/фото/текст в активную комнату.
+Подпись можно задавать в формате: `yellow|Nasha progulka`.
 
 ## Primichaniya
 
-- Eto MVP na JSON (`data/memories.json`) bez polnoy BД.
-- Dlya production rekomenduetsya PostgreSQL + object storage.
+- Mini App показывает только комнаты текущего пользователя.
+- На Render Free возможен cold start.
