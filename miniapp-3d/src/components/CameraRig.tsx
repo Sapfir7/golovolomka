@@ -1,107 +1,84 @@
 /**
- * CameraRig – wraps all camera animation logic.
- * We store a ref to the camera, expose `flyTo` and `orbitTo` helpers
- * that other components trigger via GSAP.
+ * CameraRig – единая система управления камерой.
  *
- * All camera positions are in world-space:
- *   Shelf view:  position [0, 0, 9],  lookAt [0, 0, 0]
- *   Zoomed view: position close to clicked orb, lookAt orb
- *   Desk view:   position [6, 2, 9],  lookAt [6, 0, 0]
+ * Принцип работы:
+ *  - `camTarget.pos` и `camTarget.look` — мутируемые векторы-цели
+ *  - GSAP анимирует эти векторы (просто числа)
+ *  - `CameraController` в `useFrame` плавно lerp-ит камеру к целям каждый кадр
+ *
+ * Это исключает конфликты между GSAP и R3F render loop.
  */
-import { useThree } from "@react-three/fiber";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
+import { useThree, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import gsap from "gsap";
-import { useStore } from "../store/useStore";
 
-export const SHELF_CAM: [number, number, number] = [0, 0.5, 11];
-export const DESK_CAM: [number, number, number] = [5.5, 1.5, 10];
+// ─── Глобальные цели камеры (мутируются через GSAP) ─────────────────────────
+export const camTarget = {
+  pos: new THREE.Vector3(0, 2.5, 10),
+  look: new THREE.Vector3(0, 1.8, 0),
+};
 
-export const SHELF_LOOK: [number, number, number] = [0, 0, 0];
-export const DESK_LOOK: [number, number, number] = [5, 0.5, 0];
+// ─── Именованные позиции ────────────────────────────────────────────────────
+export const CAM_SHELF_POS: [number, number, number] = [0, 2.5, 10];
+export const CAM_SHELF_LOOK: [number, number, number] = [0, 1.8, 0];
+export const CAM_DESK_POS: [number, number, number] = [0, 3.5, 2.5];
+export const CAM_DESK_LOOK: [number, number, number] = [0, 3.5, -10];
 
-export function useCameraRig() {
+// ─── CameraController – монтируется внутри Canvas ───────────────────────────
+export function CameraController() {
   const { camera } = useThree();
-  const lookAtTarget = useRef(new THREE.Vector3(...SHELF_LOOK));
+  const currentLook = useRef(new THREE.Vector3(...CAM_SHELF_LOOK));
 
-  // Continuously apply lookAt from our animated ref vector
-  // (R3F updates camera.matrixWorldNeedsUpdate each frame)
-  useEffect(() => {
-    const id = setInterval(() => {
-      camera.lookAt(lookAtTarget.current);
-      camera.updateProjectionMatrix();
-    }, 1000 / 60);
-    return () => clearInterval(id);
-  }, [camera]);
-
-  function flyToShelf(duration = 1.6) {
-    return new Promise<void>((resolve) => {
-      gsap
-        .timeline({ onComplete: resolve })
-        .to(camera.position, {
-          x: SHELF_CAM[0], y: SHELF_CAM[1], z: SHELF_CAM[2],
-          duration,
-          ease: "power3.inOut",
-        })
-        .to(
-          lookAtTarget.current,
-          { x: SHELF_LOOK[0], y: SHELF_LOOK[1], z: SHELF_LOOK[2], duration, ease: "power3.inOut" },
-          "<"
-        );
-    });
-  }
-
-  function flyToOrb(orbPos: THREE.Vector3, duration = 1.0) {
-    // Camera stops 2.8 units in front of the orb
-    const offset = new THREE.Vector3(0, 0.2, 3.2);
-    const dest = orbPos.clone().add(offset);
-    return new Promise<void>((resolve) => {
-      gsap
-        .timeline({ onComplete: resolve })
-        .to(camera.position, {
-          x: dest.x, y: dest.y, z: dest.z,
-          duration,
-          ease: "power2.inOut",
-        })
-        .to(
-          lookAtTarget.current,
-          { x: orbPos.x, y: orbPos.y, z: orbPos.z, duration, ease: "power2.inOut" },
-          "<"
-        );
-    });
-  }
-
-  function flyToDesk(duration = 1.8) {
-    return new Promise<void>((resolve) => {
-      gsap
-        .timeline({ onComplete: resolve })
-        .to(camera.position, {
-          x: DESK_CAM[0], y: DESK_CAM[1], z: DESK_CAM[2],
-          duration,
-          ease: "power3.inOut",
-        })
-        .to(
-          lookAtTarget.current,
-          { x: DESK_LOOK[0], y: DESK_LOOK[1], z: DESK_LOOK[2], duration, ease: "power3.inOut" },
-          "<"
-        );
-    });
-  }
-
-  return { camera, lookAtTarget, flyToShelf, flyToOrb, flyToDesk };
-}
-
-/** Initializes camera position on mount */
-export function CameraInit() {
-  const { camera } = useThree();
-  const phase = useStore((s) => s.phase);
-
-  useEffect(() => {
-    if (phase === "LOADING") {
-      camera.position.set(...SHELF_CAM);
-      camera.lookAt(...SHELF_LOOK);
-    }
-  }, [camera, phase]);
+  useFrame((_, delta) => {
+    // Экспоненциальный lerp, независимый от частоты кадров
+    const alpha = 1 - Math.exp(-5 * delta);
+    camera.position.lerp(camTarget.pos, alpha);
+    currentLook.current.lerp(camTarget.look, alpha);
+    camera.lookAt(currentLook.current);
+  });
 
   return null;
+}
+
+// ─── Helpers для переключения камеры ────────────────────────────────────────
+export function camToShelf(duration = 1.6) {
+  const [x, y, z] = CAM_SHELF_POS;
+  const [lx, ly, lz] = CAM_SHELF_LOOK;
+  return Promise.all([
+    new Promise<void>((res) =>
+      gsap.to(camTarget.pos, { x, y, z, duration, ease: "power2.inOut", onComplete: res })
+    ),
+    new Promise<void>((res) =>
+      gsap.to(camTarget.look, { x: lx, y: ly, z: lz, duration, ease: "power2.inOut", onComplete: res })
+    ),
+  ]);
+}
+
+export function camToOrb(orbPos: THREE.Vector3, duration = 0.85) {
+  // Камера встаёт чуть ниже и перед шаром
+  const tx = orbPos.x * 0.35;
+  const ty = orbPos.y + 0.6;
+  const tz = orbPos.z + 3.8;
+  return Promise.all([
+    new Promise<void>((res) =>
+      gsap.to(camTarget.pos, { x: tx, y: ty, z: tz, duration, ease: "power2.out", onComplete: res })
+    ),
+    new Promise<void>((res) =>
+      gsap.to(camTarget.look, { x: orbPos.x, y: orbPos.y, z: orbPos.z, duration, ease: "power2.out", onComplete: res })
+    ),
+  ]);
+}
+
+export function camToDesk(duration = 1.8) {
+  const [x, y, z] = CAM_DESK_POS;
+  const [lx, ly, lz] = CAM_DESK_LOOK;
+  return Promise.all([
+    new Promise<void>((res) =>
+      gsap.to(camTarget.pos, { x, y, z, duration, ease: "power3.inOut", onComplete: res })
+    ),
+    new Promise<void>((res) =>
+      gsap.to(camTarget.look, { x: lx, y: ly, z: lz, duration, ease: "power3.inOut", onComplete: res })
+    ),
+  ]);
 }
