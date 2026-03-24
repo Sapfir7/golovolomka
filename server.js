@@ -147,7 +147,14 @@ bot.on("text", async (ctx) => {
   await ctx.reply("Tekstovoe vospominanie sohraneno.");
 });
 
-app.use("/miniapp", express.static(path.join(__dirname, "miniapp")));
+const MINIAPP_DIR = path.join(__dirname, "miniapp");
+app.use("/miniapp", express.static(MINIAPP_DIR));
+app.get("/miniapp", (req, res) => {
+  res.sendFile(path.join(MINIAPP_DIR, "index.html"));
+});
+app.get("/miniapp/", (req, res) => {
+  res.sendFile(path.join(MINIAPP_DIR, "index.html"));
+});
 
 app.get("/api/memories", (req, res) => {
   const db = readDb();
