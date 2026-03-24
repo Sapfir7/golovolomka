@@ -56,10 +56,7 @@ bot.start(async (ctx) => {
 
   await ctx.reply(
     text,
-    Markup.inlineKeyboard([
-      [Markup.button.webApp("Otkryt biblioteku (WebApp)", `${BASE_URL}/miniapp`)],
-      [Markup.button.url("Otkryt v brauzere", `${BASE_URL}/miniapp`)]
-    ])
+    Markup.inlineKeyboard([[Markup.button.webApp("Otkryt biblioteku (WebApp)", `${BASE_URL}/miniapp`)]])
   );
 });
 
@@ -121,10 +118,7 @@ bot.on(["video", "photo"], async (ctx) => {
 
   await ctx.reply(
     `Sohraneno v sharik (${color}). Otkroy mini app.`,
-    Markup.inlineKeyboard([
-      [Markup.button.webApp("Otkryt biblioteku (WebApp)", `${BASE_URL}/miniapp`)],
-      [Markup.button.url("Otkryt v brauzere", `${BASE_URL}/miniapp`)]
-    ])
+    Markup.inlineKeyboard([[Markup.button.webApp("Otkryt biblioteku (WebApp)", `${BASE_URL}/miniapp`)]])
   );
 });
 
