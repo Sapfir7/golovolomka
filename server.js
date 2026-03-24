@@ -212,8 +212,10 @@ async function startBotWithRetry() {
   }
 }
 
-app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
+const HOST = process.env.HOST || "0.0.0.0";
+
+app.listen(PORT, HOST, () => {
+  console.log(`Server started on ${HOST}:${PORT}`);
   startBotWithRetry();
 });
 
