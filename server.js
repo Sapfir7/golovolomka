@@ -757,6 +757,9 @@ app.get("/miniapp/", (req, res) => {
 const MINIAPP3D_DIR = path.join(__dirname, "miniapp-3d-dist");
 if (require("fs").existsSync(MINIAPP3D_DIR)) {
   app.use("/miniapp-3d", express.static(MINIAPP3D_DIR));
+  app.get("/miniapp-3d/gol_v1.glb", (req, res) => {
+    res.sendFile(path.join(__dirname, "gol_v1.glb"));
+  });
   // SPA fallback — serve index.html for all /miniapp-3d/* routes
   app.get("/miniapp-3d/*", (req, res) => {
     res.sendFile(path.join(MINIAPP3D_DIR, "index.html"));
@@ -789,7 +792,7 @@ app.get("/api/memories", async (req, res) => {
   if (!member) return res.status(403).json({ error: "Forbidden" });
 
   const result = await pool.query(
-    `SELECT id, color, note, media_type, created_at
+    `SELECT id, color, note, media_type, created_at, file_id, preview_file_id
      FROM memories
      WHERE room_id = $1
      ORDER BY created_at DESC
@@ -797,15 +800,31 @@ app.get("/api/memories", async (req, res) => {
     [roomId]
   );
 
-  return res.json({
-    memories: result.rows.map((m) => ({
-      id: m.id,
-      color: m.color,
-      note: m.note,
-      mediaType: m.media_type,
-      createdAt: m.created_at
-    }))
-  });
+  const memories = await Promise.all(
+    result.rows.map(async (m) => {
+      let previewUrl = null;
+      try {
+        // Priority: explicit preview -> photo itself -> no preview
+        const previewFileId = m.preview_file_id || (m.media_type === "photo" ? m.file_id : null);
+        if (previewFileId) {
+          const link = await bot.telegram.getFileLink(previewFileId);
+          previewUrl = link.toString();
+        }
+      } catch (error) {
+        previewUrl = null;
+      }
+      return {
+        id: m.id,
+        color: m.color,
+        note: m.note,
+        mediaType: m.media_type,
+        previewUrl,
+        createdAt: m.created_at
+      };
+    })
+  );
+
+  return res.json({ memories });
 });
 
 app.get("/api/memory/:id/playback", async (req, res) => {

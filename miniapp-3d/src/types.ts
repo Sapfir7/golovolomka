@@ -16,6 +16,7 @@ export interface Memory {
   color: MemoryColor;
   note: string | null;
   mediaType: MediaType;
+  previewUrl?: string | null;
   createdAt: string;
 }
 
