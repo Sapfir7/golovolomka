@@ -14,14 +14,14 @@
 - Deploy: Render Web Service
 
 ## 3D scene and assets
-- Blender export в корень репозитория: **`gol_v2.glb`** (активная сцена).
-- HTTP: `GET /miniapp-3d/gol_v2.glb` — если `gol_v2.glb` нет на диске, сервер отдаёт **`gol_v1.glb`** (fallback).
+- Blender export в корень репозитория: **`gol_v1.glb`** (единый файл сцены; новые версии просто перезаписывают его).
+- HTTP: `GET /miniapp-3d/gol_v1.glb` отдаёт этот файл из корня проекта.
 - Объект **`Cam_temp`** в GLB: проходная точка для камеры на участке **полка → проектор** (квадратичная Безье по позиции; объект в рендере скрыт, используется только world position).
 - Дополнительные точки траектории через код: `miniapp-3d/src/cameraPath.ts` (`SHELF_TO_DESK_WAYPOINTS`) — Catmull–Rom, если массив не пуст.
 - Превью фото на шарах: общий кэш `previewTextureCache.ts` (canvas + EXIF), перед фазой `SHELF` вызывается ожидание `awaitPreviewLoads` (таймаут + короткая пауза), чтобы превью не «доезжали» с задержкой.
 
 ## Key files
-- `server.js` - bot handlers, API routes, mini app static routes, `gol_v2`/`gol_v1` GLB routes, startup logic.
+- `server.js` - bot handlers, API routes, mini app static routes, `gol_v1.glb` route, startup logic.
 - `miniapp/index.html` - legacy UI shell.
 - `miniapp/app.js` - legacy fetch rooms/memories, render balls.
 - `miniapp-3d/src/components/Scene.tsx` - 3D сцена, камера, проектор, слоты.

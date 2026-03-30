@@ -9,8 +9,8 @@ import type { Memory, Playback } from "../types";
 import { fetchPlayback } from "../api/client";
 import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
-/** Сцена из Blender; на сервере при отсутствии `gol_v2.glb` отдаётся `gol_v1.glb`. */
-const GLB_URL = `${import.meta.env.BASE_URL}gol_v2.glb`;
+/** Единый экспорт сцены из Blender в корне репозитория (`gol_v1.glb`). */
+const GLB_URL = `${import.meta.env.BASE_URL}gol_v1.glb`;
 const ORB_RADIUS = 0.1125;
 
 /**
