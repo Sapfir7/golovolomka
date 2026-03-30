@@ -7,6 +7,7 @@ import { useStore } from "../store/useStore";
 import { MemoryOrb } from "./MemoryOrb";
 import type { Memory, Playback } from "../types";
 import { fetchPlayback } from "../api/client";
+import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
 const GLB_URL = `${import.meta.env.BASE_URL}gol_v1.glb`;
 const ORB_RADIUS = 0.1125;
@@ -25,6 +26,40 @@ function bezierPoint(t: number, p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.
     mt * mt * p0.z + 2 * mt * t * p1.z + t * t * p2.z
   );
 }
+
+function computeArcMid(
+  posStart: THREE.Vector3,
+  posEnd: THREE.Vector3,
+  lookStart: THREE.Vector3,
+  lookEnd: THREE.Vector3,
+  roomCenter: THREE.Vector3
+) {
+  const mid = posStart.clone().add(posEnd).multiplyScalar(0.5);
+  mid.y += 1.35;
+  mid.z += 0.25;
+  mid.lerp(roomCenter, 0.45);
+  const lookMid = lookStart.clone().add(lookEnd).multiplyScalar(0.5).lerp(roomCenter, 0.5);
+  lookMid.y += 0.15;
+  return { mid, lookMid };
+}
+
+type StoredShelfToDeskArc =
+  | {
+      kind: "bezier";
+      p0: THREE.Vector3;
+      p1: THREE.Vector3;
+      p2: THREE.Vector3;
+      l0: THREE.Vector3;
+      l1: THREE.Vector3;
+      l2: THREE.Vector3;
+      duration: number;
+    }
+  | {
+      kind: "catmull";
+      posPts: THREE.Vector3[];
+      lookPts: THREE.Vector3[];
+      duration: number;
+    };
 
 /** Pre-allocated vectors for useFrame to avoid GC every frame. */
 const _desiredPos = new THREE.Vector3();
@@ -56,6 +91,8 @@ function SceneContent() {
   const playbackTexRef = useRef<THREE.Texture | null>(null);
   const cameraArcTweenRef = useRef<gsap.core.Tween | null>(null);
   const cameraArcProgressRef = useRef({ t: 0 });
+  /** Последняя траектория «зум к шару → проектор» — обратный полёт идёт по тем же точкам (t: 1→0). */
+  const lastShelfToDeskArcRef = useRef<StoredShelfToDeskArc | null>(null);
 
   const isPortrait = size.height > size.width;
   const isTopShelf = (idx: number) => idx <= 4;
@@ -273,16 +310,58 @@ function SceneContent() {
   }, []);
 
   const runCameraArc = useCallback(
-    (posEnd: THREE.Vector3, lookEnd: THREE.Vector3, duration: number) => {
+    (
+      posEnd: THREE.Vector3,
+      lookEnd: THREE.Vector3,
+      duration: number,
+      options?: { storeForReverse?: boolean }
+    ) => {
       cameraArcTweenRef.current?.kill();
       const posStart = cameraTarget.current.pos.clone();
       const lookStart = cameraTarget.current.look.clone();
-      const mid = posStart.clone().add(posEnd).multiplyScalar(0.5);
-      mid.y += 1.35;
-      mid.z += 0.25;
-      mid.lerp(marker.roomCenter, 0.45);
-      const lookMid = lookStart.clone().add(lookEnd).multiplyScalar(0.5).lerp(marker.roomCenter, 0.5);
-      lookMid.y += 0.15;
+      const wps = hasCustomWaypoints() ? waypointsToVectors() : [];
+
+      if (wps.length > 0) {
+        const posPts = [posStart, ...wps.map((w) => w.clone()), posEnd.clone()];
+        const { lookMid } = computeArcMid(posStart, posEnd, lookStart, lookEnd, marker.roomCenter);
+        const lookPts = [lookStart.clone(), lookMid, lookEnd.clone()];
+        const posCurve = new THREE.CatmullRomCurve3(posPts, false, "catmullrom", 0.5);
+        const lookCurve = new THREE.CatmullRomCurve3(lookPts, false, "catmullrom", 0.5);
+        if (options?.storeForReverse) {
+          lastShelfToDeskArcRef.current = {
+            kind: "catmull",
+            posPts: posPts.map((p) => p.clone()),
+            lookPts: lookPts.map((p) => p.clone()),
+            duration,
+          };
+        }
+        cameraArcProgressRef.current.t = 0;
+        cameraArcTweenRef.current = gsap.to(cameraArcProgressRef.current, {
+          t: 1,
+          duration,
+          ease: "sine.inOut",
+          onUpdate: () => {
+            const t = cameraArcProgressRef.current.t;
+            cameraTarget.current.pos.copy(posCurve.getPoint(t));
+            cameraTarget.current.look.copy(lookCurve.getPoint(t));
+          },
+        });
+        return;
+      }
+
+      const { mid, lookMid } = computeArcMid(posStart, posEnd, lookStart, lookEnd, marker.roomCenter);
+      if (options?.storeForReverse) {
+        lastShelfToDeskArcRef.current = {
+          kind: "bezier",
+          p0: posStart.clone(),
+          p1: mid.clone(),
+          p2: posEnd.clone(),
+          l0: lookStart.clone(),
+          l1: lookMid.clone(),
+          l2: lookEnd.clone(),
+          duration,
+        };
+      }
       cameraArcProgressRef.current.t = 0;
       cameraArcTweenRef.current = gsap.to(cameraArcProgressRef.current, {
         t: 1,
@@ -403,6 +482,59 @@ function SceneContent() {
     [marker.slots]
   );
 
+  /** Обратный пролёт по сохранённой кривой (те же контрольные точки, t: 1 → 0). */
+  const runCameraArcReverse = useCallback(
+    (durationScale = 1) => {
+      cameraArcTweenRef.current?.kill();
+      const arc = lastShelfToDeskArcRef.current;
+      if (!arc) {
+        const start = isPortrait ? marker.startMobile : marker.startDesktop;
+        const look = slotForIndex(lastSelectedIndex.current);
+        runCameraArc(start, look, 1.95 * durationScale);
+        return;
+      }
+      const dur = arc.duration * durationScale;
+      cameraArcProgressRef.current.t = 1;
+      if (arc.kind === "bezier") {
+        const { p0, p1, p2, l0, l1, l2 } = arc;
+        cameraArcTweenRef.current = gsap.to(cameraArcProgressRef.current, {
+          t: 0,
+          duration: dur,
+          ease: "sine.inOut",
+          onUpdate: () => {
+            const t = cameraArcProgressRef.current.t;
+            cameraTarget.current.pos.copy(bezierPoint(t, p0, p1, p2));
+            cameraTarget.current.look.copy(bezierPoint(t, l0, l1, l2));
+          },
+        });
+        return;
+      }
+      const posCurve = new THREE.CatmullRomCurve3(
+        arc.posPts.map((p) => p.clone()),
+        false,
+        "catmullrom",
+        0.5
+      );
+      const lookCurve = new THREE.CatmullRomCurve3(
+        arc.lookPts.map((p) => p.clone()),
+        false,
+        "catmullrom",
+        0.5
+      );
+      cameraArcTweenRef.current = gsap.to(cameraArcProgressRef.current, {
+        t: 0,
+        duration: dur,
+        ease: "sine.inOut",
+        onUpdate: () => {
+          const t = cameraArcProgressRef.current.t;
+          cameraTarget.current.pos.copy(posCurve.getPoint(t));
+          cameraTarget.current.look.copy(lookCurve.getPoint(t));
+        },
+      });
+    },
+    [isPortrait, marker.startDesktop, marker.startMobile, runCameraArc, slotForIndex]
+  );
+
   const onOrbClick = useCallback(
     (memory: Memory, idx: number) => {
       if (phase !== "SHELF") return;
@@ -450,7 +582,7 @@ function SceneContent() {
         .finally(() => setLoadingPlayback(false));
     }
 
-    runCameraArc(deskEyeExtended, currentPlanePos, 2.15);
+    runCameraArc(deskEyeExtended, currentPlanePos, 2.15, { storeForReverse: true });
 
     const p0 = from.clone();
     const p2 = to.clone();
@@ -496,19 +628,20 @@ function SceneContent() {
     resetPlaneScale();
     updateProjectionMaterial(null);
 
-    const start = isPortrait ? marker.startMobile : marker.startDesktop;
-    runCameraArc(start, to, 1.95);
+    const camDur = lastShelfToDeskArcRef.current?.duration ?? 2.15;
+    const orbDur = 1.2;
+    runCameraArcReverse(1);
 
     const p1 = new THREE.Vector3((from.x + to.x) / 2 + 0.25, Math.max(from.y, to.y) + 0.9, (from.z + to.z) / 2 + 0.05);
     const progress = { t: 0 };
     gsap.to(progress, {
       t: 1,
-      duration: 1.2,
+      duration: orbDur,
       ease: "power1.inOut",
       onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, from, p1, to) } : cur)),
-      onComplete: goShelf,
     });
-  }, [deskMemoryId, disposePlaybackResources, goShelf, resetPlaneScale, isPortrait, marker, memories, phase, setPhase, slotForIndex, runCameraArc, updateProjectionMaterial]);
+    gsap.delayedCall(Math.max(camDur, orbDur), goShelf);
+  }, [deskMemoryId, disposePlaybackResources, goShelf, resetPlaneScale, marker, memories, phase, setPhase, slotForIndex, runCameraArcReverse, updateProjectionMaterial]);
 
   useEffect(() => {
     window.addEventListener("scene:watch", startWatch);
