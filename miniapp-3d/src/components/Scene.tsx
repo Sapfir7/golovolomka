@@ -43,29 +43,55 @@ function SceneContent() {
   const [flying, setFlying] = useState<{ memory: Memory; pos: THREE.Vector3 } | null>(null);
   const [deskMemoryId, setDeskMemoryId] = useState<string | null>(null);
   const [playbackTexture, setPlaybackTexture] = useState<THREE.Texture | null>(null);
+  const deskVideoTextureRef = useRef<THREE.VideoTexture | null>(null);
+  const deskVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const playbackTexRef = useRef<THREE.Texture | null>(null);
 
   const isPortrait = size.height > size.width;
   const isTopShelf = (idx: number) => idx <= 4;
 
   const marker = useMemo(() => {
+    model.updateMatrixWorld(true);
     const get = (name: string) => model.getObjectByName(name);
-    const pos = (name: string) => get(name)?.position.clone() ?? null;
-    const slots = Array.from({ length: 10 }, (_, i) => pos(`Slot_${String(i).padStart(2, "0")}`)).filter(Boolean) as THREE.Vector3[];
+    const worldPos = (name: string) => {
+      const o = get(name);
+      if (!o) return null;
+      const v = new THREE.Vector3();
+      o.getWorldPosition(v);
+      return v;
+    };
+    /** Центр экрана в мировых координатах (для lookAt), не только pivot объекта. */
+    const screenCenter = (obj: THREE.Object3D | undefined, pivotFallback: THREE.Vector3) => {
+      if (!obj) return pivotFallback.clone();
+      const box = new THREE.Box3().setFromObject(obj);
+      if (!box.isEmpty()) return box.getCenter(new THREE.Vector3());
+      const v = new THREE.Vector3();
+      obj.getWorldPosition(v);
+      return v;
+    };
+    const fb = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+    const slotFallback = fb(4.55, 1.45, 0.75);
+    const slots = Array.from({ length: 10 }, (_, i) => worldPos(`Slot_${String(i).padStart(2, "0")}`) ?? slotFallback.clone());
+    const planeMobileObj = get("Plane_mobile");
+    const planeDesktopObj = get("Plane_desktope");
+    const planeMobilePivot = worldPos("Plane_mobile") ?? worldPos("Plane") ?? fb(-7.81, 2.81, -3.72);
+    const planeDesktopPivot = worldPos("Plane_desktope") ?? worldPos("Plane") ?? fb(-7.81, 2.75, -3.77);
     return {
       slots,
-      stand: pos("pos_final") ?? new THREE.Vector3(-3.33, 0.65, -3.67),
-      startMobile: pos("CamStart_Mobile") ?? pos("pos_1_for_slots_0_1_2_3_4") ?? new THREE.Vector3(4.54, 1.11, -2.5),
-      startDesktop: pos("CamStart_Desktop") ?? pos("pos_1_for_slots_0_1_2_3_4") ?? new THREE.Vector3(4.51, 1.02, -2.13),
-      zoom1Mobile: pos("CamZoom1_Mobile") ?? new THREE.Vector3(4.55, 1.40, -1.64),
-      zoom1Desktop: pos("CamZoom1_Desktop") ?? new THREE.Vector3(4.58, 1.56, -0.83),
-      zoom2Mobile: pos("CamZoom2_Mobile") ?? new THREE.Vector3(4.55, 1.19, -1.62),
-      zoom2Desktop: pos("CamZoom2_Desktop") ?? new THREE.Vector3(4.58, 1.31, -0.83),
-      deskMobile: pos("CamDesk_Mobile") ?? pos("pos_prefinal") ?? new THREE.Vector3(-2.61, 2.57, -3.74),
-      deskDesktop: pos("CamDesk_desktop") ?? pos("pos_prefinal") ?? new THREE.Vector3(-2.18, 2.70, -3.74),
-      planeMobileObj: get("Plane_mobile"),
-      planeDesktopObj: get("Plane_desktope"),
-      planeMobilePos: pos("Plane_mobile") ?? pos("Plane") ?? new THREE.Vector3(-7.81, 2.81, -3.72),
-      planeDesktopPos: pos("Plane_desktope") ?? pos("Plane") ?? new THREE.Vector3(-7.81, 2.75, -3.77),
+      stand: worldPos("pos_final") ?? fb(-3.33, 0.65, -3.67),
+      startMobile: worldPos("CamStart_Mobile") ?? worldPos("pos_1_for_slots_0_1_2_3_4") ?? fb(4.54, 1.11, -2.5),
+      startDesktop: worldPos("CamStart_Desktop") ?? worldPos("pos_1_for_slots_0_1_2_3_4") ?? fb(4.51, 1.02, -2.13),
+      zoom1Mobile: worldPos("CamZoom1_Mobile") ?? fb(4.55, 1.4, -1.64),
+      zoom1Desktop: worldPos("CamZoom1_Desktop") ?? fb(4.58, 1.56, -0.83),
+      zoom2Mobile: worldPos("CamZoom2_Mobile") ?? fb(4.55, 1.19, -1.62),
+      zoom2Desktop: worldPos("CamZoom2_Desktop") ?? fb(4.58, 1.31, -0.83),
+      /** Пара камера–экран из GLB: CamDesk_Mobile + Plane_mobile (портрет), CamDesk_desktop + Plane_desktope (альбом). */
+      deskMobile: worldPos("CamDesk_Mobile") ?? worldPos("pos_prefinal") ?? fb(-2.61, 2.57, -3.74),
+      deskDesktop: worldPos("CamDesk_desktop") ?? worldPos("pos_prefinal") ?? fb(-2.18, 2.7, -3.74),
+      planeMobileObj,
+      planeDesktopObj,
+      planeMobilePos: screenCenter(planeMobileObj, planeMobilePivot),
+      planeDesktopPos: screenCenter(planeDesktopObj, planeDesktopPivot),
       wardrobe: get("Wardrobe"),
       room: get("Room"),
     };
@@ -85,29 +111,39 @@ function SceneContent() {
 
   const updateProjectionMaterial = useCallback(
     (texture: THREE.Texture | null) => {
-      const applyTo = (obj: THREE.Object3D | undefined) => {
+      const placeholderMat = () =>
+        new THREE.MeshStandardMaterial({
+          color: "#0f071a",
+          emissive: "#3a2452",
+          emissiveIntensity: 0.2,
+          roughness: 0.88,
+          metalness: 0.02,
+          transparent: true,
+          opacity: 0.98,
+          side: THREE.DoubleSide,
+        });
+      const projectionMat = (map: THREE.Texture) =>
+        new THREE.MeshBasicMaterial({
+          map,
+          color: 0xffffff,
+          toneMapped: false,
+          transparent: true,
+          opacity: 0.99,
+          side: THREE.DoubleSide,
+        });
+      const applyToPlane = (obj: THREE.Object3D | undefined, isActive: boolean) => {
         if (!obj) return;
-        obj.visible = phase === "DESK";
+        obj.visible = phase === "DESK" && isActive;
+        const showMedia = Boolean(texture) && phase === "DESK" && isActive;
         obj.traverse((o) => {
           const mesh = o as THREE.Mesh;
           if (!mesh.isMesh) return;
-          mesh.material = new THREE.MeshStandardMaterial({
-            color: "#0f071a",
-            emissive: "#3a2452",
-            emissiveIntensity: texture ? 0.45 : 0.2,
-            map: texture ?? null,
-            emissiveMap: texture ?? null,
-            roughness: 0.88,
-            metalness: 0.02,
-            transparent: true,
-            opacity: 0.98,
-          });
+          mesh.material = showMedia ? projectionMat(texture!) : placeholderMat();
         });
       };
-      applyTo(marker.planeMobileObj ?? undefined);
-      applyTo(marker.planeDesktopObj ?? undefined);
-      if (marker.planeMobileObj) marker.planeMobileObj.visible = phase === "DESK" && isPortrait;
-      if (marker.planeDesktopObj) marker.planeDesktopObj.visible = phase === "DESK" && !isPortrait;
+      // Трансляция только на «свою» плоскость; вторая остаётся без карты (не дублируем текстуру на оба меша).
+      applyToPlane(marker.planeMobileObj ?? undefined, isPortrait);
+      applyToPlane(marker.planeDesktopObj ?? undefined, !isPortrait);
     },
     [isPortrait, marker.planeDesktopObj, marker.planeMobileObj, phase]
   );
@@ -146,6 +182,10 @@ function SceneContent() {
     camera.position.lerp(desiredPos, alpha);
     lookCurrent.current.lerp(cameraTarget.current.look, alpha);
     camera.lookAt(lookCurrent.current);
+    const vt = deskVideoTextureRef.current;
+    if (vt && vt.image instanceof HTMLVideoElement && vt.image.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      vt.needsUpdate = true;
+    }
   });
 
   // Init camera.
@@ -163,49 +203,81 @@ function SceneContent() {
     updateProjectionMaterial(playbackTexture);
   }, [isPortrait, phase, playbackTexture, updateProjectionMaterial]);
 
-  // Build texture for projection plane from playback.
+  const disposePlaybackResources = useCallback(() => {
+    const v = deskVideoElRef.current;
+    deskVideoElRef.current = null;
+    deskVideoTextureRef.current = null;
+    if (v) {
+      v.pause();
+      v.removeAttribute("src");
+      v.load();
+    }
+    const t = playbackTexRef.current;
+    playbackTexRef.current = null;
+    if (t) t.dispose();
+    setPlaybackTexture(null);
+  }, []);
+
+  // Build texture for projection plane from playback (same-origin URLs from /api/.../media).
   const applyPlaybackToPlane = useCallback(
     (pb: Playback | null) => {
       if (!pb || pb.mediaType === "text" || !pb.url) {
-        if (playbackTexture) playbackTexture.dispose();
-        setPlaybackTexture(null);
+        disposePlaybackResources();
         updateProjectionMaterial(null);
         return;
       }
+      disposePlaybackResources();
+      updateProjectionMaterial(null);
       if (pb.mediaType === "photo") {
         const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin("anonymous");
         loader.load(
           pb.url,
           (t) => {
             t.colorSpace = THREE.SRGBColorSpace;
+            playbackTexRef.current = t;
             setPlaybackTexture(t);
             updateProjectionMaterial(t);
           },
           undefined,
-          () => updateProjectionMaterial(null)
+          () => {
+            disposePlaybackResources();
+            updateProjectionMaterial(null);
+          }
         );
         return;
       }
       if (pb.mediaType === "video") {
         const video = document.createElement("video");
+        deskVideoElRef.current = video;
         video.src = pb.url;
         video.crossOrigin = "anonymous";
-        video.muted = false;
+        video.muted = true;
         video.volume = videoVolume;
         video.playsInline = true;
         video.loop = true;
+        video.setAttribute("playsinline", "");
         video.autoplay = true;
-        video.play().catch(() => void 0);
+        void video.play().catch(() => void 0);
         const texture = new THREE.VideoTexture(video);
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
+        deskVideoTextureRef.current = texture;
+        playbackTexRef.current = texture;
         setPlaybackTexture(texture);
         updateProjectionMaterial(texture);
       }
     },
-    [playbackTexture, updateProjectionMaterial, videoVolume]
+    [disposePlaybackResources, updateProjectionMaterial, videoVolume]
   );
+
+  useEffect(() => {
+    const v = deskVideoElRef.current;
+    if (!v) return;
+    v.muted = videoVolume < 0.001;
+    v.volume = videoVolume;
+  }, [videoVolume]);
 
   useEffect(() => {
     if (phase !== "DESK") return;
@@ -214,10 +286,10 @@ function SceneContent() {
 
   useEffect(() => {
     const unsub = useStore.subscribe((state) => {
-      if (phase === "DESK") applyPlaybackToPlane(state.playback);
+      if (state.phase === "DESK") applyPlaybackToPlane(state.playback);
     });
     return () => unsub();
-  }, [applyPlaybackToPlane, phase]);
+  }, [applyPlaybackToPlane]);
 
   const slotForIndex = useCallback(
     (idx: number) => marker.slots[idx] ?? marker.slots[marker.slots.length - 1] ?? new THREE.Vector3(4.5, 1.4, 0.75),
@@ -253,12 +325,13 @@ function SceneContent() {
     setDofFocus(0);
     selectMemory(null);
     setPlayback(null);
+    disposePlaybackResources();
     setPhase("SHELF");
     const idx = lastSelectedIndex.current;
     const slot = slotForIndex(Math.min(idx, marker.slots.length - 1));
     const start = isPortrait ? marker.startMobile : marker.startDesktop;
     tweenCamera(start, slot, 1.05);
-  }, [isPortrait, marker, selectMemory, setDeskZoom, setPhase, setPlayback, slotForIndex, tweenCamera]);
+  }, [disposePlaybackResources, isPortrait, marker, selectMemory, setDeskZoom, setPhase, setPlayback, slotForIndex, tweenCamera]);
 
   const startWatch = useCallback(async () => {
     if (phase !== "ZOOMED" || !selectedMemoryId) return;
@@ -321,6 +394,7 @@ function SceneContent() {
     setPhase("TRANSITION");
     setDeskMemoryId(null);
     setFlying({ memory, pos: from.clone() });
+    disposePlaybackResources();
     updateProjectionMaterial(null);
 
     const start = isPortrait ? marker.startMobile : marker.startDesktop;
@@ -335,7 +409,7 @@ function SceneContent() {
       onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, from, p1, to) } : cur)),
       onComplete: goShelf,
     });
-  }, [deskMemoryId, goShelf, isPortrait, marker, memories, phase, setPhase, slotForIndex, tweenCamera, updateProjectionMaterial]);
+  }, [deskMemoryId, disposePlaybackResources, goShelf, isPortrait, marker, memories, phase, setPhase, slotForIndex, tweenCamera, updateProjectionMaterial]);
 
   useEffect(() => {
     window.addEventListener("scene:watch", startWatch);

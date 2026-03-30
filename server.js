@@ -1,6 +1,8 @@
 const path = require("path");
 const dns = require("dns");
 const crypto = require("crypto");
+const { Readable } = require("stream");
+const { pipeline } = require("stream/promises");
 const express = require("express");
 const { Telegraf, Markup } = require("telegraf");
 const { Pool } = require("pg");
@@ -841,15 +843,49 @@ app.get("/api/memory/:id/playback", async (req, res) => {
 
   if (memory.media_type === "text") return res.json({ mediaType: "text", note: memory.note || "" });
 
+  // Same-origin URL so WebGL (TextureLoader / VideoTexture) can sample without CORS tainting.
+  const mediaUrl = `/api/memory/${encodeURIComponent(memory.id)}/media?telegramId=${encodeURIComponent(telegramId)}`;
+  return res.json({
+    mediaType: memory.media_type,
+    url: mediaUrl,
+    note: memory.note
+  });
+});
+
+/** Stream Telegram file through our origin — required for Three.js textures in the mini app. */
+app.get("/api/memory/:id/media", async (req, res) => {
+  const telegramId = String(req.query.telegramId || "");
+  if (!telegramId) return res.status(400).json({ error: "telegramId is required" });
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) return res.status(403).json({ error: "Forbidden" });
+
+  const result = await pool.query("SELECT * FROM memories WHERE id = $1", [req.params.id]);
+  if (result.rowCount === 0) return res.status(404).json({ error: "Memory not found" });
+  const memory = result.rows[0];
+  const member = await getMembership(user.id, memory.room_id);
+  if (!member) return res.status(403).json({ error: "Forbidden" });
+
+  if (memory.media_type === "text" || !memory.file_id) {
+    return res.status(400).json({ error: "No media file" });
+  }
+
   try {
     const link = await bot.telegram.getFileLink(memory.file_id);
-    return res.json({
-      mediaType: memory.media_type,
-      url: link.toString(),
-      note: memory.note
-    });
+    const upstream = await fetch(link.href);
+    if (!upstream.ok) {
+      return res.status(502).json({ error: "Upstream fetch failed" });
+    }
+    const ct = upstream.headers.get("content-type");
+    if (ct) res.setHeader("Content-Type", ct);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    if (!upstream.body) {
+      return res.status(502).json({ error: "Empty body" });
+    }
+    await pipeline(Readable.fromWeb(upstream.body), res);
   } catch (error) {
-    return res.status(500).json({ error: "Cannot get media url from Telegram" });
+    if (!res.headersSent) {
+      return res.status(500).json({ error: "Media stream failed" });
+    }
   }
 });
 
