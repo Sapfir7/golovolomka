@@ -37,6 +37,9 @@ function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
       texture.needsUpdate = true;
       resolve(texture);
     };
@@ -57,4 +60,22 @@ export function preloadAllPreviews(urls: (string | null | undefined)[]): void {
   for (const url of urls) {
     if (url) getPreviewTexture(url);
   }
+}
+
+/**
+ * Ждёт загрузки превью (или таймаут), плюс короткая пауза — чтобы шары не мигали пустыми.
+ */
+export async function awaitPreviewLoads(
+  urls: (string | null | undefined)[],
+  opts?: { timeoutMs?: number; minWaitMs?: number }
+): Promise<void> {
+  const list = [...new Set(urls.filter(Boolean) as string[])];
+  if (list.length === 0) return;
+  const timeoutMs = opts?.timeoutMs ?? 10_000;
+  const minWaitMs = opts?.minWaitMs ?? 400;
+  const t0 = Date.now();
+  const loads = list.map((u) => getPreviewTexture(u));
+  await Promise.race([Promise.all(loads), new Promise<void>((r) => setTimeout(r, timeoutMs))]);
+  const pad = minWaitMs - (Date.now() - t0);
+  if (pad > 0) await new Promise((r) => setTimeout(r, pad));
 }

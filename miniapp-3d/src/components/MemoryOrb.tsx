@@ -1,11 +1,11 @@
 /**
  * MemoryOrb — шар воспоминания: спокойный, умеренное свечение, превью на ядре.
  *
- * Preview textures come from the shared cache (previewTextureCache.ts) which
- * loads images through a canvas to guarantee correct EXIF orientation.
+ * С превью: MeshBasicMaterial + toneMapped:false (чёткая картинка без «грязи» от лайтинга).
+ * Без превью: стандартный материал с emissive.
  */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MemoryColor } from "../types";
 import { getPreviewTexture } from "../previewTextureCache";
@@ -45,14 +45,22 @@ export function MemoryOrb({
   radius = 0.1125,
   onClick,
 }: MemoryOrbProps) {
+  const { gl } = useThree();
   const groupRef = useRef<THREE.Group>(null!);
+  const basicRef = useRef<THREE.MeshBasicMaterial>(null!);
   const coreRef = useRef<THREE.MeshStandardMaterial>(null!);
   const phase = useMemo(() => (orbIndex * 0.73) % (Math.PI * 2), [orbIndex]);
 
   useFrame(({ clock }) => {
     if (!groupRef.current || isTransitioning) return;
     const t = clock.getElapsedTime();
-    if (coreRef.current) {
+    if (texture) {
+      if (!basicRef.current) return;
+      const base = isSelected ? 0.94 : 0.9;
+      const pulse = isSelected ? Math.sin(t * 2.2 + phase) * 0.05 : Math.sin(t * 0.9 + phase) * 0.04;
+      basicRef.current.opacity = Math.min(1, base + pulse);
+    } else {
+      if (!coreRef.current) return;
       const base = isSelected ? 0.42 : 0.28;
       const pulse = isSelected ? Math.sin(t * 2.2 + phase) * 0.06 : Math.sin(t * 0.9 + phase) * 0.03;
       coreRef.current.emissiveIntensity = base + pulse;
@@ -77,34 +85,57 @@ export function MemoryOrb({
       return;
     }
     let cancelled = false;
-    getPreviewTexture(previewUrl).then((t) => {
-      if (!cancelled && t) setTexture(t);
+    getPreviewTexture(previewUrl).then((tex) => {
+      if (!cancelled && tex) setTexture(tex);
     });
     return () => {
       cancelled = true;
     };
   }, [previewUrl]);
 
+  useEffect(() => {
+    if (!texture) return;
+    const maxA = gl.capabilities.getMaxAnisotropy();
+    texture.anisotropy = Math.min(8, maxA);
+    texture.needsUpdate = true;
+  }, [texture, gl]);
+
+  const innerScale = radius * 1.2;
+
   return (
     <group ref={groupRef} position={position} onClick={handleClick}>
-      <mesh scale={[radius * 1.2, radius * 1.2, radius * 1.2]}>
-        <sphereGeometry args={[1, 20, 20]} />
-        <meshStandardMaterial
-          ref={coreRef}
-          color={hex}
-          emissive={emissive}
-          emissiveIntensity={0.32}
-          map={texture}
-          roughness={0.6}
-          metalness={0}
-          transparent
-          opacity={texture ? 0.92 : 0.6}
-          depthWrite={false}
-        />
-      </mesh>
+      {texture ? (
+        <mesh scale={[innerScale, innerScale, innerScale]}>
+          <sphereGeometry args={[1, 40, 40]} />
+          <meshBasicMaterial
+            ref={basicRef}
+            map={texture}
+            color="#ffffff"
+            toneMapped={false}
+            transparent
+            opacity={0.92}
+            depthWrite={false}
+          />
+        </mesh>
+      ) : (
+        <mesh scale={[innerScale, innerScale, innerScale]}>
+          <sphereGeometry args={[1, 28, 28]} />
+          <meshStandardMaterial
+            ref={coreRef}
+            color={hex}
+            emissive={emissive}
+            emissiveIntensity={0.32}
+            roughness={0.6}
+            metalness={0}
+            transparent
+            opacity={0.6}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
 
       <mesh>
-        <sphereGeometry args={[radius, 24, 24]} />
+        <sphereGeometry args={[radius, 28, 28]} />
         <meshStandardMaterial
           color={hex}
           roughness={0.15}

@@ -9,7 +9,8 @@ import type { Memory, Playback } from "../types";
 import { fetchPlayback } from "../api/client";
 import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
-const GLB_URL = `${import.meta.env.BASE_URL}gol_v1.glb`;
+/** Сцена из Blender; на сервере при отсутствии `gol_v2.glb` отдаётся `gol_v1.glb`. */
+const GLB_URL = `${import.meta.env.BASE_URL}gol_v2.glb`;
 const ORB_RADIUS = 0.1125;
 
 /**
@@ -65,8 +66,11 @@ type StoredShelfToDeskArc =
 const _desiredPos = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 
+/** Пока только мобильная развёртка GLB (Plane_mobile, Cam*_Mobile). Десктоп — отдельный проход позже. */
+const MOBILE_SCENE_ONLY = true;
+
 function SceneContent() {
-  const { camera, size } = useThree();
+  const { camera } = useThree();
   const { scene } = useGLTF(GLB_URL);
   const model = useMemo(() => scene.clone(true), [scene]);
 
@@ -94,7 +98,7 @@ function SceneContent() {
   /** Последняя траектория «зум к шару → проектор» — обратный полёт идёт по тем же точкам (t: 1→0). */
   const lastShelfToDeskArcRef = useRef<StoredShelfToDeskArc | null>(null);
 
-  const isPortrait = size.height > size.width;
+  const isPortrait = MOBILE_SCENE_ONLY;
   const isTopShelf = (idx: number) => idx <= 4;
 
   const marker = useMemo(() => {
@@ -147,21 +151,29 @@ function SceneContent() {
       planeDesktopPos: screenCenter(planeDesktopObj, planeDesktopPivot),
       wardrobe: get("Wardrobe"),
       room: get("Room"),
+      /** Проходная точка камеры (полка → проектор); позиция из Blender, объект скрываем в сцене. */
+      camTemp: worldPos("Cam_temp"),
       roomCenter,
     };
+  }, [model]);
+
+  useEffect(() => {
+    model.traverse((o) => {
+      if (o.name === "Cam_temp") o.visible = false;
+    });
   }, [model]);
 
   const currentPlaneObj = isPortrait ? marker.planeMobileObj : marker.planeDesktopObj;
   const currentPlanePos = isPortrait ? marker.planeMobilePos : marker.planeDesktopPos;
 
   const cameraTarget = useRef({
-    pos: (isPortrait ? marker.startMobile : marker.startDesktop).clone(),
+    pos: (MOBILE_SCENE_ONLY ? marker.startMobile : marker.startDesktop).clone(),
     look: (marker.slots[2] ?? new THREE.Vector3(4.55, 1.45, 0.75)).clone(),
   });
   const lookCurrent = useRef(cameraTarget.current.look.clone());
   const lastSelectedIndex = useRef(0);
 
-  const deskPosTarget = isPortrait ? marker.deskMobile : marker.deskDesktop;
+  const deskPosTarget = MOBILE_SCENE_ONLY ? marker.deskMobile : marker.deskDesktop;
 
   /** Camera further back so projector is ~70% of view. */
   const deskEyeExtended = useMemo(() => {
@@ -282,13 +294,13 @@ function SceneContent() {
   });
 
   useEffect(() => {
-    const start = isPortrait ? marker.startMobile : marker.startDesktop;
+    const start = MOBILE_SCENE_ONLY ? marker.startMobile : marker.startDesktop;
     const look = marker.slots[2] ?? new THREE.Vector3(4.55, 1.45, 0.75);
     camera.position.copy(start);
     camera.lookAt(look);
     cameraTarget.current.pos.copy(start);
     cameraTarget.current.look.copy(look);
-  }, [camera, isPortrait, marker]);
+  }, [camera, marker]);
 
   useEffect(() => {
     updateProjectionMaterial(playbackTexture);
@@ -314,7 +326,7 @@ function SceneContent() {
       posEnd: THREE.Vector3,
       lookEnd: THREE.Vector3,
       duration: number,
-      options?: { storeForReverse?: boolean }
+      options?: { storeForReverse?: boolean; positionMid?: THREE.Vector3 }
     ) => {
       cameraArcTweenRef.current?.kill();
       const posStart = cameraTarget.current.pos.clone();
@@ -350,11 +362,12 @@ function SceneContent() {
       }
 
       const { mid, lookMid } = computeArcMid(posStart, posEnd, lookStart, lookEnd, marker.roomCenter);
+      const posMid = options?.positionMid ? options.positionMid.clone() : mid;
       if (options?.storeForReverse) {
         lastShelfToDeskArcRef.current = {
           kind: "bezier",
           p0: posStart.clone(),
-          p1: mid.clone(),
+          p1: posMid.clone(),
           p2: posEnd.clone(),
           l0: lookStart.clone(),
           l1: lookMid.clone(),
@@ -369,7 +382,7 @@ function SceneContent() {
         ease: "sine.inOut",
         onUpdate: () => {
           const t = cameraArcProgressRef.current.t;
-          cameraTarget.current.pos.copy(bezierPoint(t, posStart, mid, posEnd));
+          cameraTarget.current.pos.copy(bezierPoint(t, posStart, posMid, posEnd));
           cameraTarget.current.look.copy(bezierPoint(t, lookStart, lookMid, lookEnd));
         },
       });
@@ -488,7 +501,7 @@ function SceneContent() {
       cameraArcTweenRef.current?.kill();
       const arc = lastShelfToDeskArcRef.current;
       if (!arc) {
-        const start = isPortrait ? marker.startMobile : marker.startDesktop;
+        const start = MOBILE_SCENE_ONLY ? marker.startMobile : marker.startDesktop;
         const look = slotForIndex(lastSelectedIndex.current);
         runCameraArc(start, look, 1.95 * durationScale);
         return;
@@ -532,7 +545,7 @@ function SceneContent() {
         },
       });
     },
-    [isPortrait, marker.startDesktop, marker.startMobile, runCameraArc, slotForIndex]
+    [marker.startDesktop, marker.startMobile, runCameraArc, slotForIndex]
   );
 
   const onOrbClick = useCallback(
@@ -542,12 +555,10 @@ function SceneContent() {
       lastSelectedIndex.current = idx;
       selectMemory(memory.id);
       setPhase("ZOOMED");
-      const target = isTopShelf(idx)
-        ? (isPortrait ? marker.zoom1Mobile : marker.zoom1Desktop)
-        : (isPortrait ? marker.zoom2Mobile : marker.zoom2Desktop);
+      const target = isTopShelf(idx) ? marker.zoom1Mobile : marker.zoom2Mobile;
       runCameraArc(target, slot, 1.05);
     },
-    [isPortrait, marker, phase, selectMemory, setPhase, slotForIndex, runCameraArc]
+    [marker, phase, selectMemory, setPhase, slotForIndex, runCameraArc]
   );
 
   const goShelf = useCallback(() => {
@@ -560,9 +571,9 @@ function SceneContent() {
     setPhase("SHELF");
     const idx = lastSelectedIndex.current;
     const slot = slotForIndex(Math.min(idx, marker.slots.length - 1));
-    const start = isPortrait ? marker.startMobile : marker.startDesktop;
+    const start = MOBILE_SCENE_ONLY ? marker.startMobile : marker.startDesktop;
     runCameraArc(start, slot, 1.35);
-  }, [disposePlaybackResources, resetPlaneScale, isPortrait, marker, selectMemory, setDeskZoom, setPhase, setPlayback, slotForIndex, runCameraArc]);
+  }, [disposePlaybackResources, resetPlaneScale, marker, selectMemory, setDeskZoom, setPhase, setPlayback, slotForIndex, runCameraArc]);
 
   const startWatch = useCallback(async () => {
     if (phase !== "ZOOMED" || !selectedMemoryId) return;
@@ -582,7 +593,10 @@ function SceneContent() {
         .finally(() => setLoadingPlayback(false));
     }
 
-    runCameraArc(deskEyeExtended, currentPlanePos, 2.15, { storeForReverse: true });
+    runCameraArc(deskEyeExtended, currentPlanePos, 2.15, {
+      storeForReverse: true,
+      ...(marker.camTemp ? { positionMid: marker.camTemp } : {}),
+    });
 
     const p0 = from.clone();
     const p2 = to.clone();
@@ -603,6 +617,7 @@ function SceneContent() {
     currentPlanePos,
     deskEyeExtended,
     initData,
+    marker.camTemp,
     marker.stand,
     memories,
     phase,
@@ -737,7 +752,7 @@ export function Scene() {
     <Canvas
       camera={{ position: [4.52, 1.1, -2.4], fov: 47, near: 0.01, far: 100 }}
       gl={{ antialias: true, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}
-      dpr={[1, 1.5]}
+      dpr={[1, 2]}
       style={{ width: "100%", height: "100%" }}
     >
       <Suspense fallback={null}>
