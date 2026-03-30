@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useStore } from "../store/useStore";
 import { fetchMemories, patchMemoryNote, deleteMemory } from "../api/client";
 
@@ -27,7 +27,6 @@ export function UIOverlay() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
 
   const selected = useMemo(
     () => memories.find((m) => m.id === selectedMemoryId) ?? null,
@@ -35,10 +34,6 @@ export function UIOverlay() {
   );
   const roomRole = rooms.find((r) => r.id === activeRoomId)?.role;
   const canEdit = roomRole === "owner" || roomRole === "editor";
-
-  useEffect(() => {
-    if (videoRef.current) videoRef.current.volume = videoVolume;
-  }, [videoVolume, playback?.url]);
 
   const switchRoom = async (roomId: string) => {
     if (!telegramId) return;
@@ -124,21 +119,9 @@ export function UIOverlay() {
 
       {phase === "DESK" && (
         <>
-          <div className="absolute inset-0 flex items-center justify-center px-4 pointer-events-none">
-            <div className="relative overflow-hidden pointer-events-auto" style={{ width: "min(90vw, 72vh)", height: "min(62vh, 55vw)", borderRadius: "50%" }}>
-              {isLoadingPlayback && <div className="w-full h-full grid place-items-center bg-black/80 text-white/70 text-sm">Загрузка...</div>}
-              {!isLoadingPlayback && playback?.mediaType === "video" && playback.url && (
-                <video ref={videoRef} src={playback.url} autoPlay controls playsInline className="w-full h-full object-contain bg-black" />
-              )}
-              {!isLoadingPlayback && playback?.mediaType === "photo" && playback.url && (
-                <img src={playback.url} alt="memory" className="w-full h-full object-contain bg-black" />
-              )}
-              {!isLoadingPlayback && playback?.mediaType === "text" && (
-                <div className="w-full h-full grid place-items-center p-8 bg-[#12041f] text-white/90 text-center">
-                  {playback.note || selected?.note || ""}
-                </div>
-              )}
-              <div className="absolute inset-0 rounded-[50%] pointer-events-none" style={{ background: "radial-gradient(ellipse at center, transparent 35%, rgba(9,2,18,0.55) 68%, rgba(6,0,14,0.95) 94%)" }} />
+          <div className="absolute top-16 left-3 right-3 pointer-events-none">
+            <div className="rounded-xl border border-white/10 bg-black/55 backdrop-blur-md p-3 text-xs text-white/70">
+              {isLoadingPlayback ? "Загрузка воспоминания..." : "Воспоминание транслируется на плоскость сцены"}
             </div>
           </div>
 
