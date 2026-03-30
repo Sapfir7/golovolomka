@@ -8,7 +8,7 @@
  *
  * Левитация: синусоида по Y с индивидуальной фазой (не все синхронно).
  */
-import { useRef, useMemo, useCallback } from "react";
+import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MemoryColor } from "../types";
@@ -33,6 +33,8 @@ export interface MemoryOrbProps {
   orbIndex: number;
   isSelected: boolean;
   isTransitioning: boolean;
+  previewUrl?: string | null;
+  radius?: number;
   onClick?: () => void;
 }
 
@@ -42,6 +44,8 @@ export function MemoryOrb({
   orbIndex,
   isSelected,
   isTransitioning,
+  previewUrl,
+  radius = 0.1125,
   onClick,
 }: MemoryOrbProps) {
   const groupRef = useRef<THREE.Group>(null!);
@@ -70,54 +74,67 @@ export function MemoryOrb({
 
   const hex = COLOR_HEX[color];
   const emissive = EMISSIVE_HEX[color];
+  const [texture, setTexture] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    if (!previewUrl) {
+      setTexture(null);
+      return;
+    }
+    let cancelled = false;
+    const loader = new THREE.TextureLoader();
+    loader.load(
+      previewUrl,
+      (t) => {
+        if (cancelled) return;
+        t.colorSpace = THREE.SRGBColorSpace;
+        t.wrapS = THREE.ClampToEdgeWrapping;
+        t.wrapT = THREE.ClampToEdgeWrapping;
+        setTexture(t);
+      },
+      undefined,
+      () => setTexture(null)
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [previewUrl]);
 
   return (
     <group ref={groupRef} position={position} onClick={handleClick}>
-      {/* Внутреннее ядро – первый диск */}
-      <mesh scale={[0.5, 0.5, 0.5]}>
-        <circleGeometry args={[1, 48]} />
+      {/* Внутреннее ядро с превью: фото слегка "внутри стекла" */}
+      <mesh scale={[radius * 1.3, radius * 1.3, radius * 1.3]}>
+        <sphereGeometry args={[1, 24, 24]} />
         <meshStandardMaterial
           ref={coreRef}
           color={hex}
           emissive={emissive}
-          emissiveIntensity={1.0}
-          side={THREE.DoubleSide}
+          emissiveIntensity={0.75}
+          map={texture}
+          roughness={0.55}
+          metalness={0}
           transparent
-          opacity={0.9}
-          depthWrite={false}
-        />
-      </mesh>
-
-      {/* Внутреннее ядро – второй диск под углом 45° */}
-      <mesh scale={[0.38, 0.38, 0.38]} rotation={[0, 0, Math.PI / 4]}>
-        <circleGeometry args={[1, 8]} />
-        <meshStandardMaterial
-          color={hex}
-          emissive={emissive}
-          emissiveIntensity={0.7}
-          side={THREE.DoubleSide}
-          transparent
-          opacity={0.6}
+          opacity={texture ? 0.88 : 0.55}
           depthWrite={false}
         />
       </mesh>
 
       {/* Стеклянная оболочка */}
       <mesh>
-        <sphereGeometry args={[0.54, 56, 56]} />
+        <sphereGeometry args={[radius, 42, 42]} />
         <meshPhysicalMaterial
           color={hex}
-          transmission={0.9}
-          thickness={0.55}
-          roughness={0.04}
+          transmission={0.94}
+          thickness={radius * 0.5}
+          roughness={0.16}
           metalness={0}
           ior={1.48}
-          reflectivity={0.28}
+          reflectivity={0.35}
           clearcoat={1}
-          clearcoatRoughness={0.04}
+          clearcoatRoughness={0.1}
           envMapIntensity={1.4}
           transparent
-          opacity={0.94}
+          opacity={0.85}
           depthWrite={false}
         />
       </mesh>
@@ -125,8 +142,8 @@ export function MemoryOrb({
       {/* Локальный свет от шара */}
       <pointLight
         color={hex}
-        intensity={isSelected ? 3.0 : 1.2}
-        distance={2.0}
+        intensity={isSelected ? 0.9 : 0.35}
+        distance={0.9}
         decay={2}
       />
     </group>

@@ -1,33 +1,47 @@
 # Golovolomka Memory Bot
 
-Telegram bot + Mini App with rooms and role-based access:
+Telegram bot + Mini App с комнатами и ролями доступа:
 - комнаты (семья/друзья и т.д.), до 10 у владельца
-- инвайт-ссылки с правами (`viewer` или `editor`)
+- инвайт-ссылки с правами `viewer` (просмотр) или `editor` (редактирование)
 - воспоминания по комнатам в интерфейсе шариков
-- PostgreSQL storage (reliable for production)
+- просмотр медиа по типу (`video`/`photo`/`text`)
+- редактирование текста и удаление воспоминаний в mini app для `owner/editor`
+- PostgreSQL storage
+- 3D Mini App на React Three Fiber с сценой из Blender (`gol_v1.glb`)
 
-## 1) Ustanovka
+## 1) Установка
 
 ```bash
 npm install
 ```
 
-## 2) Nastroika
+## 2) Настройка
 
-1. Sozday `.env` po primeru `.env.example`
-2. Zapolni:
-   - `BOT_TOKEN` - token bota iz BotFather
-   - `BASE_URL` - public URL, naprimer `https://your-domain.com`
-   - `DATABASE_URL` - postgres connection string
-   - `PORT` - po umolchaniyu `3000`
+1. Создай `.env` по примеру `.env.example`
+2. Заполни:
+   - `BOT_TOKEN` - токен бота из BotFather
+   - `BASE_URL` - публичный URL, например `https://your-domain.com`
+   - `DATABASE_URL` - строка подключения Postgres
+   - `PORT` - по умолчанию `3000`
 
-> Dlya Telegram WebApp nuzhen dostupnyy iz interneta URL (https). Lokalno mozhno testit cherez tunnel (ngrok/cloudflared).
+> Для Telegram WebApp нужен доступный из интернета URL (`https`). Локально можно тестировать через туннель.
 
-## 3) Zapusk
+## 3) Запуск
 
 ```bash
 npm start
 ```
+
+### Сборка 3D mini app (обязательно после изменений фронта)
+
+```bash
+cd miniapp-3d
+npm install
+npm run build
+cd ..
+```
+
+После сборки файлы попадают в `miniapp-3d-dist/`, и сервер раздает их по пути `/miniapp-3d`.
 
 ## 4) Сценарий в боте
 
@@ -40,8 +54,10 @@ npm start
   - `Пригласить для просмотра`
   - `Пригласить с редактированием`
   - `Посмотреть комнату` (миниапп сразу в этой комнате)
+- приглашенный по ссылке пользователь получает комнату в свой список
 
-## Primichaniya
+## 5) Примечания
 
 - Mini App показывает только комнаты текущего пользователя.
 - На Render Free возможен cold start.
+- Файл Blender-сцены должен лежать в корне проекта как `gol_v1.glb` (используется роутом `/miniapp-3d/gol_v1.glb`).

@@ -44,6 +44,14 @@ interface StoreState {
   // ── Edit / delete helpers ────────────────────────────────────────────────
   removeMemory: (id: string) => void;
   updateMemoryNote: (id: string, note: string) => void;
+
+  /** 0…1: приближение камеры к «экрану» в фазе DESK (движение вдоль луча к точке взгляда) */
+  deskZoom: number;
+  setDeskZoom: (v: number) => void;
+
+  /** 0…1: громкость видео в режиме просмотра */
+  videoVolume: number;
+  setVideoVolume: (v: number) => void;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -98,4 +106,10 @@ export const useStore = create<StoreState>((set, get) => ({
           ? { ...s.playback, note }
           : s.playback,
     })),
+
+  deskZoom: 0,
+  setDeskZoom: (v) => set({ deskZoom: Math.min(1, Math.max(0, v)) }),
+
+  videoVolume: 1,
+  setVideoVolume: (v) => set({ videoVolume: Math.min(1, Math.max(0, v)) }),
 }));
