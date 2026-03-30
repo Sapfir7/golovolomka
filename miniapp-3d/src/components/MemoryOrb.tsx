@@ -1,5 +1,6 @@
 /**
- * MemoryOrb — шар воспоминания: спокойный, без «левитации», умеренное свечение, превью на ядре.
+ * MemoryOrb — шар воспоминания: спокойный, умеренное свечение, превью на ядре.
+ * No MeshPhysicalMaterial with transmission — much cheaper for mobile.
  */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame } from "@react-three/fiber";
@@ -94,7 +95,8 @@ export function MemoryOrb({
 
   return (
     <group ref={groupRef} position={position} onClick={handleClick}>
-      <mesh scale={[radius * 1.25, radius * 1.25, radius * 1.25]}>
+      {/* Core with preview texture */}
+      <mesh scale={[radius * 1.2, radius * 1.2, radius * 1.2]}>
         <sphereGeometry args={[1, 20, 20]} />
         <meshStandardMaterial
           ref={coreRef}
@@ -102,30 +104,25 @@ export function MemoryOrb({
           emissive={emissive}
           emissiveIntensity={0.32}
           map={texture}
-          roughness={0.62}
+          roughness={0.6}
           metalness={0}
           transparent
-          opacity={texture ? 0.92 : 0.62}
+          opacity={texture ? 0.92 : 0.6}
           depthWrite={false}
         />
       </mesh>
 
+      {/* Outer glass shell — simple transparent standard material instead of expensive physical+transmission */}
       <mesh>
-        <sphereGeometry args={[radius, 28, 28]} />
-        <meshPhysicalMaterial
+        <sphereGeometry args={[radius, 24, 24]} />
+        <meshStandardMaterial
           color={hex}
-          transmission={0.72}
-          thickness={radius * 0.45}
-          roughness={0.22}
-          metalness={0}
-          ior={1.45}
-          reflectivity={0.22}
-          clearcoat={0.45}
-          clearcoatRoughness={0.28}
-          envMapIntensity={0.55}
+          roughness={0.15}
+          metalness={0.08}
           transparent
-          opacity={0.88}
+          opacity={0.35}
           depthWrite={false}
+          envMapIntensity={0.5}
         />
       </mesh>
     </group>

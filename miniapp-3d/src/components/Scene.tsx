@@ -11,23 +11,11 @@ import { fetchPlayback } from "../api/client";
 const GLB_URL = `${import.meta.env.BASE_URL}gol_v1.glb`;
 const ORB_RADIUS = 0.1125;
 
-/** Подгонка UV под соотношение сторон медиа (contain в квадратной рамке UV без поворота). */
-function configureTextureAspect(texture: THREE.Texture, width: number, height: number) {
-  if (!width || !height) return;
-  const a = width / height;
-  texture.wrapS = THREE.ClampToEdgeWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.center.set(0.5, 0.5);
-  texture.rotation = 0;
-  if (a >= 1) {
-    texture.repeat.set(1, 1 / a);
-    texture.offset.set(0, (1 - 1 / a) / 2);
-  } else {
-    texture.repeat.set(a, 1);
-    texture.offset.set((1 - a) / 2, 0);
-  }
-  texture.needsUpdate = true;
-}
+/**
+ * Blender planes have UVs where U→worldY (vertical) and V→worldZ (horizontal),
+ * so every texture needs a 90° CCW rotation to display correctly.
+ */
+const PLANE_TEX_ROTATION = Math.PI / 2;
 
 function bezierPoint(t: number, p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3) {
   const mt = 1 - t;
@@ -37,6 +25,10 @@ function bezierPoint(t: number, p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.
     mt * mt * p0.z + 2 * mt * t * p1.z + t * t * p2.z
   );
 }
+
+/** Pre-allocated vectors for useFrame to avoid GC every frame. */
+const _desiredPos = new THREE.Vector3();
+const _dir = new THREE.Vector3();
 
 function SceneContent() {
   const { camera, size } = useThree();
@@ -111,6 +103,9 @@ function SceneContent() {
       deskDesktop: worldPos("CamDesk_desktop") ?? worldPos("pos_prefinal") ?? fb(-2.18, 2.7, -3.74),
       planeMobileObj,
       planeDesktopObj,
+      /** Original Blender scales — used as basis for dynamic resize. */
+      planeMobileScale: planeMobileObj?.scale.clone() ?? fb(2.02, 1, 1.35),
+      planeDesktopScale: planeDesktopObj?.scale.clone() ?? fb(1.38, 1, 2.78),
       planeMobilePos: screenCenter(planeMobileObj, planeMobilePivot),
       planeDesktopPos: screenCenter(planeDesktopObj, planeDesktopPivot),
       wardrobe: get("Wardrobe"),
@@ -119,6 +114,7 @@ function SceneContent() {
     };
   }, [model]);
 
+  const currentPlaneObj = isPortrait ? marker.planeMobileObj : marker.planeDesktopObj;
   const currentPlanePos = isPortrait ? marker.planeMobilePos : marker.planeDesktopPos;
 
   const cameraTarget = useRef({
@@ -130,14 +126,47 @@ function SceneContent() {
 
   const deskPosTarget = isPortrait ? marker.deskMobile : marker.deskDesktop;
 
-  /** Камера чуть дальше от экрана, вдоль луча «экран → глаз». */
+  /** Camera further back so projector is ~70% of view. */
   const deskEyeExtended = useMemo(() => {
     const eye = deskPosTarget.clone();
     const target = currentPlanePos.clone();
     const pull = eye.clone().sub(target);
     if (pull.lengthSq() < 1e-8) return eye;
-    return eye.add(pull.normalize().multiplyScalar(0.72));
+    return eye.add(pull.normalize().multiplyScalar(2.1));
   }, [deskPosTarget, currentPlanePos]);
+
+  /**
+   * Resize the active plane to match the media aspect ratio.
+   * Plane local coords: [-1,0,1] to [1,0,-1] (2x2 quad in XZ).
+   * After Blender rotation: scale.x → world Y height, scale.z → world Z width.
+   */
+  const resizePlaneForMedia = useCallback(
+    (mediaWidth: number, mediaHeight: number) => {
+      const obj = currentPlaneObj;
+      if (!obj || !mediaWidth || !mediaHeight) return;
+      const baseScale = isPortrait ? marker.planeMobileScale : marker.planeDesktopScale;
+      const maxH = baseScale.x;
+      const maxW = baseScale.z;
+      const a = mediaWidth / mediaHeight;
+      let h: number, w: number;
+      if (a >= 1) {
+        w = maxW;
+        h = w / a;
+        if (h > maxH) { h = maxH; w = h * a; }
+      } else {
+        h = maxH;
+        w = h * a;
+        if (w > maxW) { w = maxW; h = w / a; }
+      }
+      obj.scale.set(h, baseScale.y, w);
+    },
+    [currentPlaneObj, isPortrait, marker.planeDesktopScale, marker.planeMobileScale]
+  );
+
+  const resetPlaneScale = useCallback(() => {
+    if (marker.planeMobileObj) marker.planeMobileObj.scale.copy(marker.planeMobileScale);
+    if (marker.planeDesktopObj) marker.planeDesktopObj.scale.copy(marker.planeDesktopScale);
+  }, [marker.planeDesktopObj, marker.planeDesktopScale, marker.planeMobileObj, marker.planeMobileScale]);
 
   const updateProjectionMaterial = useCallback(
     (texture: THREE.Texture | null) => {
@@ -182,17 +211,17 @@ function SceneContent() {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       mesh.material = new THREE.MeshStandardMaterial({
-        color: "#5a3b22",
-        roughness: 0.8,
-        metalness: 0.08,
+        color: "#7a5e3e",
+        roughness: 0.72,
+        metalness: 0.06,
       });
     });
     marker.room?.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       mesh.material = new THREE.MeshStandardMaterial({
-        color: "#261344",
-        roughness: 0.94,
+        color: "#3a2260",
+        roughness: 0.85,
         metalness: 0.02,
       });
     });
@@ -200,13 +229,13 @@ function SceneContent() {
   }, [marker.room, marker.wardrobe, updateProjectionMaterial]);
 
   useFrame((_, delta) => {
-    const alpha = 1 - Math.exp(-2.6 * delta);
-    const desiredPos = cameraTarget.current.pos.clone();
+    const alpha = 1 - Math.exp(-2.8 * delta);
+    _desiredPos.copy(cameraTarget.current.pos);
     if (phase === "DESK" && deskZoom > 0.001) {
-      const dir = new THREE.Vector3().subVectors(cameraTarget.current.look, desiredPos).normalize();
-      desiredPos.addScaledVector(dir, deskZoom * 1.15);
+      _dir.subVectors(cameraTarget.current.look, _desiredPos).normalize();
+      _desiredPos.addScaledVector(_dir, deskZoom * 3.5);
     }
-    camera.position.lerp(desiredPos, alpha);
+    camera.position.lerp(_desiredPos, alpha);
     lookCurrent.current.lerp(cameraTarget.current.look, alpha);
     camera.lookAt(lookCurrent.current);
     const vt = deskVideoTextureRef.current;
@@ -269,14 +298,25 @@ function SceneContent() {
     [marker.roomCenter]
   );
 
+  /** Configure texture rotation for Blender plane UV orientation. */
+  const prepareTexForPlane = (tex: THREE.Texture) => {
+    tex.center.set(0.5, 0.5);
+    tex.rotation = PLANE_TEX_ROTATION;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.needsUpdate = true;
+  };
+
   const applyPlaybackToPlane = useCallback(
     (pb: Playback | null) => {
       if (!pb || pb.mediaType === "text" || !pb.url) {
         disposePlaybackResources();
+        resetPlaneScale();
         updateProjectionMaterial(null);
         return;
       }
       disposePlaybackResources();
+      resetPlaneScale();
       updateProjectionMaterial(null);
       if (pb.mediaType === "photo") {
         const loader = new THREE.TextureLoader();
@@ -285,16 +325,17 @@ function SceneContent() {
           pb.url,
           (t) => {
             t.colorSpace = THREE.SRGBColorSpace;
+            prepareTexForPlane(t);
             const img = t.image as HTMLImageElement;
             const apply = () => {
               const w = img.naturalWidth || 1;
               const h = img.naturalHeight || 1;
-              configureTextureAspect(t, w, h);
+              resizePlaneForMedia(w, h);
               playbackTexRef.current = t;
               setPlaybackTexture(t);
               updateProjectionMaterial(t);
             };
-            if (img.complete) apply();
+            if (img.complete && img.naturalWidth) apply();
             else img.onload = apply;
           },
           undefined,
@@ -318,13 +359,13 @@ function SceneContent() {
         video.autoplay = true;
         const texture = new THREE.VideoTexture(video);
         texture.colorSpace = THREE.SRGBColorSpace;
-        texture.flipY = false;
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
+        prepareTexForPlane(texture);
         video.addEventListener(
           "loadedmetadata",
           () => {
-            configureTextureAspect(texture, video.videoWidth, video.videoHeight);
+            resizePlaneForMedia(video.videoWidth, video.videoHeight);
             texture.needsUpdate = true;
           },
           { once: true }
@@ -336,7 +377,7 @@ function SceneContent() {
         updateProjectionMaterial(texture);
       }
     },
-    [disposePlaybackResources, updateProjectionMaterial, videoVolume]
+    [disposePlaybackResources, resetPlaneScale, resizePlaneForMedia, updateProjectionMaterial, videoVolume]
   );
 
   useEffect(() => {
@@ -384,12 +425,13 @@ function SceneContent() {
     selectMemory(null);
     setPlayback(null);
     disposePlaybackResources();
+    resetPlaneScale();
     setPhase("SHELF");
     const idx = lastSelectedIndex.current;
     const slot = slotForIndex(Math.min(idx, marker.slots.length - 1));
     const start = isPortrait ? marker.startMobile : marker.startDesktop;
     runCameraArc(start, slot, 1.35);
-  }, [disposePlaybackResources, isPortrait, marker, selectMemory, setDeskZoom, setPhase, setPlayback, slotForIndex, runCameraArc]);
+  }, [disposePlaybackResources, resetPlaneScale, isPortrait, marker, selectMemory, setDeskZoom, setPhase, setPlayback, slotForIndex, runCameraArc]);
 
   const startWatch = useCallback(async () => {
     if (phase !== "ZOOMED" || !selectedMemoryId) return;
@@ -452,6 +494,7 @@ function SceneContent() {
     setDeskMemoryId(null);
     setFlying({ memory, pos: from.clone() });
     disposePlaybackResources();
+    resetPlaneScale();
     updateProjectionMaterial(null);
 
     const start = isPortrait ? marker.startMobile : marker.startDesktop;
@@ -466,7 +509,7 @@ function SceneContent() {
       onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, from, p1, to) } : cur)),
       onComplete: goShelf,
     });
-  }, [deskMemoryId, disposePlaybackResources, goShelf, isPortrait, marker, memories, phase, setPhase, slotForIndex, runCameraArc, updateProjectionMaterial]);
+  }, [deskMemoryId, disposePlaybackResources, goShelf, resetPlaneScale, isPortrait, marker, memories, phase, setPhase, slotForIndex, runCameraArc, updateProjectionMaterial]);
 
   useEffect(() => {
     window.addEventListener("scene:watch", startWatch);
@@ -531,10 +574,28 @@ function SceneContent() {
         />
       )}
 
-      <ambientLight intensity={0.42} color="#a89bc8" />
-      <hemisphereLight args={["#c4b8e8", "#1a1025", 0.35]} />
-      <pointLight position={[4.6, 2.7, -1.5]} intensity={0.55} color="#f0dcc8" />
-      <pointLight position={[-6.5, 3.2, -5.5]} intensity={0.55} color="#8890c8" />
+      {/* ── Lighting ─────────────────────────────────────────────────── */}
+      <ambientLight intensity={1.2} color="#d8cce8" />
+      <hemisphereLight args={["#ede4f5", "#3a2260", 0.8]} />
+      {/* Main warm key from above-right of the shelf */}
+      <directionalLight position={[3, 5, 0]} intensity={1.8} color="#ffe4c4" />
+      {/* Fill light from behind the camera during shelf view */}
+      <pointLight position={[5, 2.5, -2]} intensity={2.5} color="#f5e0c8" distance={14} decay={1.2} />
+      {/* Blue-purple accent from the projector wall side */}
+      <pointLight position={[-6, 3, -4]} intensity={2.0} color="#a4a8e8" distance={16} decay={1.2} />
+      {/* Soft fill from below to lighten the floor / underside */}
+      <pointLight position={[0, 0.3, -2]} intensity={1.0} color="#c8b8e0" distance={10} decay={1.5} />
+      {/* Spotlight on the projector screen area */}
+      <spotLight
+        position={[-3, 4.5, -3.7]}
+        target-position={[-7.8, 2.7, -3.7]}
+        angle={0.55}
+        penumbra={0.6}
+        intensity={2.0}
+        color="#d0c8f0"
+        distance={12}
+        decay={1.2}
+      />
     </>
   );
 }
@@ -543,7 +604,7 @@ export function Scene() {
   return (
     <Canvas
       camera={{ position: [4.52, 1.1, -2.4], fov: 47, near: 0.01, far: 100 }}
-      gl={{ antialias: true, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping }}
+      gl={{ antialias: true, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}
       dpr={[1, 1.5]}
       style={{ width: "100%", height: "100%" }}
     >
