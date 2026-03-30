@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useStore } from "../store/useStore";
 import { fetchMemories, patchMemoryNote, deleteMemory } from "../api/client";
+import { preloadAllPreviews } from "../previewTextureCache";
 
 export function UIOverlay() {
   const phase = useStore((s) => s.phase);
@@ -41,6 +42,7 @@ export function UIOverlay() {
     setActiveRoom(roomId);
     try {
       const data = await fetchMemories(telegramId, roomId, initData);
+      preloadAllPreviews(data.memories.map((m) => m.previewUrl));
       setMemories(data.memories);
       setPhase("SHELF");
     } catch {

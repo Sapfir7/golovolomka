@@ -1,11 +1,14 @@
 /**
  * MemoryOrb — шар воспоминания: спокойный, умеренное свечение, превью на ядре.
- * No MeshPhysicalMaterial with transmission — much cheaper for mobile.
+ *
+ * Preview textures come from the shared cache (previewTextureCache.ts) which
+ * loads images through a canvas to guarantee correct EXIF orientation.
  */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MemoryColor } from "../types";
+import { getPreviewTexture } from "../previewTextureCache";
 
 export const COLOR_HEX: Record<MemoryColor, string> = {
   yellow: "#FFE156",
@@ -74,20 +77,9 @@ export function MemoryOrb({
       return;
     }
     let cancelled = false;
-    const loader = new THREE.TextureLoader();
-    loader.setCrossOrigin("anonymous");
-    loader.load(
-      previewUrl,
-      (t) => {
-        if (cancelled) return;
-        t.colorSpace = THREE.SRGBColorSpace;
-        t.wrapS = THREE.ClampToEdgeWrapping;
-        t.wrapT = THREE.ClampToEdgeWrapping;
-        setTexture(t);
-      },
-      undefined,
-      () => setTexture(null)
-    );
+    getPreviewTexture(previewUrl).then((t) => {
+      if (!cancelled && t) setTexture(t);
+    });
     return () => {
       cancelled = true;
     };
@@ -95,7 +87,6 @@ export function MemoryOrb({
 
   return (
     <group ref={groupRef} position={position} onClick={handleClick}>
-      {/* Core with preview texture */}
       <mesh scale={[radius * 1.2, radius * 1.2, radius * 1.2]}>
         <sphereGeometry args={[1, 20, 20]} />
         <meshStandardMaterial
@@ -112,7 +103,6 @@ export function MemoryOrb({
         />
       </mesh>
 
-      {/* Outer glass shell — simple transparent standard material instead of expensive physical+transmission */}
       <mesh>
         <sphereGeometry args={[radius, 24, 24]} />
         <meshStandardMaterial

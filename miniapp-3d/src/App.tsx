@@ -13,6 +13,7 @@ import { Scene } from "./components/Scene";
 import { UIOverlay } from "./components/UIOverlay";
 import { useStore } from "./store/useStore";
 import { fetchRooms, fetchMemories } from "./api/client";
+import { preloadAllPreviews } from "./previewTextureCache";
 import "./index.css";
 
 function getTelegramId(): string | null {
@@ -88,8 +89,8 @@ export default function App() {
           setActiveRoom(targetRoomId);
         }
 
-        // Load memories for that room
         const { memories } = await fetchMemories(telegramId!, targetRoomId, initData);
+        preloadAllPreviews(memories.map((m) => m.previewUrl));
         setMemories(memories);
         setPhase("SHELF");
       } catch (e) {

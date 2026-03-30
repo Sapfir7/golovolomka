@@ -319,31 +319,30 @@ function SceneContent() {
       resetPlaneScale();
       updateProjectionMaterial(null);
       if (pb.mediaType === "photo") {
-        const loader = new THREE.TextureLoader();
-        loader.setCrossOrigin("anonymous");
-        loader.load(
-          pb.url,
-          (t) => {
-            t.colorSpace = THREE.SRGBColorSpace;
-            prepareTexForPlane(t);
-            const img = t.image as HTMLImageElement;
-            const apply = () => {
-              const w = img.naturalWidth || 1;
-              const h = img.naturalHeight || 1;
-              resizePlaneForMedia(w, h);
-              playbackTexRef.current = t;
-              setPlaybackTexture(t);
-              updateProjectionMaterial(t);
-            };
-            if (img.complete && img.naturalWidth) apply();
-            else img.onload = apply;
-          },
-          undefined,
-          () => {
-            disposePlaybackResources();
-            updateProjectionMaterial(null);
-          }
-        );
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          const w = img.naturalWidth || 1;
+          const h = img.naturalHeight || 1;
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+          ctx.drawImage(img, 0, 0, w, h);
+          const t = new THREE.CanvasTexture(canvas);
+          t.colorSpace = THREE.SRGBColorSpace;
+          prepareTexForPlane(t);
+          resizePlaneForMedia(w, h);
+          playbackTexRef.current = t;
+          setPlaybackTexture(t);
+          updateProjectionMaterial(t);
+        };
+        img.onerror = () => {
+          disposePlaybackResources();
+          updateProjectionMaterial(null);
+        };
+        img.src = pb.url;
         return;
       }
       if (pb.mediaType === "video") {
