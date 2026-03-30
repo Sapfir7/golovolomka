@@ -1,6 +1,5 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Environment, useGLTF } from "@react-three/drei";
-import { EffectComposer, Bloom, DepthOfField } from "@react-three/postprocessing";
+import { useGLTF } from "@react-three/drei";
 import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import gsap from "gsap";
@@ -9,8 +8,26 @@ import { MemoryOrb } from "./MemoryOrb";
 import type { Memory, Playback } from "../types";
 import { fetchPlayback } from "../api/client";
 
-const GLB_URL = "/miniapp-3d/gol_v1.glb";
+const GLB_URL = `${import.meta.env.BASE_URL}gol_v1.glb`;
 const ORB_RADIUS = 0.1125;
+
+/** Подгонка UV под соотношение сторон медиа (contain в квадратной рамке UV без поворота). */
+function configureTextureAspect(texture: THREE.Texture, width: number, height: number) {
+  if (!width || !height) return;
+  const a = width / height;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.center.set(0.5, 0.5);
+  texture.rotation = 0;
+  if (a >= 1) {
+    texture.repeat.set(1, 1 / a);
+    texture.offset.set(0, (1 - 1 / a) / 2);
+  } else {
+    texture.repeat.set(a, 1);
+    texture.offset.set((1 - a) / 2, 0);
+  }
+  texture.needsUpdate = true;
+}
 
 function bezierPoint(t: number, p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3) {
   const mt = 1 - t;
@@ -39,13 +56,14 @@ function SceneContent() {
   const setDeskZoom = useStore((s) => s.setDeskZoom);
   const videoVolume = useStore((s) => s.videoVolume);
 
-  const [dofFocus, setDofFocus] = useState(0);
   const [flying, setFlying] = useState<{ memory: Memory; pos: THREE.Vector3 } | null>(null);
   const [deskMemoryId, setDeskMemoryId] = useState<string | null>(null);
   const [playbackTexture, setPlaybackTexture] = useState<THREE.Texture | null>(null);
   const deskVideoTextureRef = useRef<THREE.VideoTexture | null>(null);
   const deskVideoElRef = useRef<HTMLVideoElement | null>(null);
   const playbackTexRef = useRef<THREE.Texture | null>(null);
+  const cameraArcTweenRef = useRef<gsap.core.Tween | null>(null);
+  const cameraArcProgressRef = useRef({ t: 0 });
 
   const isPortrait = size.height > size.width;
   const isTopShelf = (idx: number) => idx <= 4;
@@ -60,7 +78,6 @@ function SceneContent() {
       o.getWorldPosition(v);
       return v;
     };
-    /** Центр экрана в мировых координатах (для lookAt), не только pivot объекта. */
     const screenCenter = (obj: THREE.Object3D | undefined, pivotFallback: THREE.Vector3) => {
       if (!obj) return pivotFallback.clone();
       const box = new THREE.Box3().setFromObject(obj);
@@ -76,6 +93,11 @@ function SceneContent() {
     const planeDesktopObj = get("Plane_desktope");
     const planeMobilePivot = worldPos("Plane_mobile") ?? worldPos("Plane") ?? fb(-7.81, 2.81, -3.72);
     const planeDesktopPivot = worldPos("Plane_desktope") ?? worldPos("Plane") ?? fb(-7.81, 2.75, -3.77);
+    const roomCenter = new THREE.Vector3();
+    slots.forEach((s) => roomCenter.add(s));
+    roomCenter.multiplyScalar(1 / Math.max(slots.length, 1));
+    roomCenter.y += 1.15;
+    roomCenter.x += 0.15;
     return {
       slots,
       stand: worldPos("pos_final") ?? fb(-3.33, 0.65, -3.67),
@@ -85,7 +107,6 @@ function SceneContent() {
       zoom1Desktop: worldPos("CamZoom1_Desktop") ?? fb(4.58, 1.56, -0.83),
       zoom2Mobile: worldPos("CamZoom2_Mobile") ?? fb(4.55, 1.19, -1.62),
       zoom2Desktop: worldPos("CamZoom2_Desktop") ?? fb(4.58, 1.31, -0.83),
-      /** Пара камера–экран из GLB: CamDesk_Mobile + Plane_mobile (портрет), CamDesk_desktop + Plane_desktope (альбом). */
       deskMobile: worldPos("CamDesk_Mobile") ?? worldPos("pos_prefinal") ?? fb(-2.61, 2.57, -3.74),
       deskDesktop: worldPos("CamDesk_desktop") ?? worldPos("pos_prefinal") ?? fb(-2.18, 2.7, -3.74),
       planeMobileObj,
@@ -94,10 +115,10 @@ function SceneContent() {
       planeDesktopPos: screenCenter(planeDesktopObj, planeDesktopPivot),
       wardrobe: get("Wardrobe"),
       room: get("Room"),
+      roomCenter,
     };
   }, [model]);
 
-  const currentPlaneObj = isPortrait ? marker.planeMobileObj : marker.planeDesktopObj;
   const currentPlanePos = isPortrait ? marker.planeMobilePos : marker.planeDesktopPos;
 
   const cameraTarget = useRef({
@@ -108,6 +129,15 @@ function SceneContent() {
   const lastSelectedIndex = useRef(0);
 
   const deskPosTarget = isPortrait ? marker.deskMobile : marker.deskDesktop;
+
+  /** Камера чуть дальше от экрана, вдоль луча «экран → глаз». */
+  const deskEyeExtended = useMemo(() => {
+    const eye = deskPosTarget.clone();
+    const target = currentPlanePos.clone();
+    const pull = eye.clone().sub(target);
+    if (pull.lengthSq() < 1e-8) return eye;
+    return eye.add(pull.normalize().multiplyScalar(0.72));
+  }, [deskPosTarget, currentPlanePos]);
 
   const updateProjectionMaterial = useCallback(
     (texture: THREE.Texture | null) => {
@@ -141,14 +171,12 @@ function SceneContent() {
           mesh.material = showMedia ? projectionMat(texture!) : placeholderMat();
         });
       };
-      // Трансляция только на «свою» плоскость; вторая остаётся без карты (не дублируем текстуру на оба меша).
       applyToPlane(marker.planeMobileObj ?? undefined, isPortrait);
       applyToPlane(marker.planeDesktopObj ?? undefined, !isPortrait);
     },
     [isPortrait, marker.planeDesktopObj, marker.planeMobileObj, phase]
   );
 
-  // Base beta material pass.
   useEffect(() => {
     marker.wardrobe?.traverse((o) => {
       const mesh = o as THREE.Mesh;
@@ -171,9 +199,8 @@ function SceneContent() {
     updateProjectionMaterial(null);
   }, [marker.room, marker.wardrobe, updateProjectionMaterial]);
 
-  // Camera smoothing + desk zoom dolly.
   useFrame((_, delta) => {
-    const alpha = 1 - Math.exp(-5 * delta);
+    const alpha = 1 - Math.exp(-2.6 * delta);
     const desiredPos = cameraTarget.current.pos.clone();
     if (phase === "DESK" && deskZoom > 0.001) {
       const dir = new THREE.Vector3().subVectors(cameraTarget.current.look, desiredPos).normalize();
@@ -188,7 +215,6 @@ function SceneContent() {
     }
   });
 
-  // Init camera.
   useEffect(() => {
     const start = isPortrait ? marker.startMobile : marker.startDesktop;
     const look = marker.slots[2] ?? new THREE.Vector3(4.55, 1.45, 0.75);
@@ -198,7 +224,6 @@ function SceneContent() {
     cameraTarget.current.look.copy(look);
   }, [camera, isPortrait, marker]);
 
-  // Responsive plane toggle.
   useEffect(() => {
     updateProjectionMaterial(playbackTexture);
   }, [isPortrait, phase, playbackTexture, updateProjectionMaterial]);
@@ -218,7 +243,32 @@ function SceneContent() {
     setPlaybackTexture(null);
   }, []);
 
-  // Build texture for projection plane from playback (same-origin URLs from /api/.../media).
+  const runCameraArc = useCallback(
+    (posEnd: THREE.Vector3, lookEnd: THREE.Vector3, duration: number) => {
+      cameraArcTweenRef.current?.kill();
+      const posStart = cameraTarget.current.pos.clone();
+      const lookStart = cameraTarget.current.look.clone();
+      const mid = posStart.clone().add(posEnd).multiplyScalar(0.5);
+      mid.y += 1.35;
+      mid.z += 0.25;
+      mid.lerp(marker.roomCenter, 0.45);
+      const lookMid = lookStart.clone().add(lookEnd).multiplyScalar(0.5).lerp(marker.roomCenter, 0.5);
+      lookMid.y += 0.15;
+      cameraArcProgressRef.current.t = 0;
+      cameraArcTweenRef.current = gsap.to(cameraArcProgressRef.current, {
+        t: 1,
+        duration,
+        ease: "sine.inOut",
+        onUpdate: () => {
+          const t = cameraArcProgressRef.current.t;
+          cameraTarget.current.pos.copy(bezierPoint(t, posStart, mid, posEnd));
+          cameraTarget.current.look.copy(bezierPoint(t, lookStart, lookMid, lookEnd));
+        },
+      });
+    },
+    [marker.roomCenter]
+  );
+
   const applyPlaybackToPlane = useCallback(
     (pb: Playback | null) => {
       if (!pb || pb.mediaType === "text" || !pb.url) {
@@ -235,9 +285,17 @@ function SceneContent() {
           pb.url,
           (t) => {
             t.colorSpace = THREE.SRGBColorSpace;
-            playbackTexRef.current = t;
-            setPlaybackTexture(t);
-            updateProjectionMaterial(t);
+            const img = t.image as HTMLImageElement;
+            const apply = () => {
+              const w = img.naturalWidth || 1;
+              const h = img.naturalHeight || 1;
+              configureTextureAspect(t, w, h);
+              playbackTexRef.current = t;
+              setPlaybackTexture(t);
+              updateProjectionMaterial(t);
+            };
+            if (img.complete) apply();
+            else img.onload = apply;
           },
           undefined,
           () => {
@@ -258,11 +316,20 @@ function SceneContent() {
         video.loop = true;
         video.setAttribute("playsinline", "");
         video.autoplay = true;
-        void video.play().catch(() => void 0);
         const texture = new THREE.VideoTexture(video);
         texture.colorSpace = THREE.SRGBColorSpace;
+        texture.flipY = false;
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
+        video.addEventListener(
+          "loadedmetadata",
+          () => {
+            configureTextureAspect(texture, video.videoWidth, video.videoHeight);
+            texture.needsUpdate = true;
+          },
+          { once: true }
+        );
+        void video.play().catch(() => void 0);
         deskVideoTextureRef.current = texture;
         playbackTexRef.current = texture;
         setPlaybackTexture(texture);
@@ -296,14 +363,6 @@ function SceneContent() {
     [marker.slots]
   );
 
-  const tweenCamera = useCallback(
-    (targetPos: THREE.Vector3, lookAt: THREE.Vector3, duration: number) => {
-      gsap.to(cameraTarget.current.pos, { x: targetPos.x, y: targetPos.y, z: targetPos.z, duration, ease: "power2.inOut" });
-      gsap.to(cameraTarget.current.look, { x: lookAt.x, y: lookAt.y, z: lookAt.z, duration, ease: "power2.inOut" });
-    },
-    []
-  );
-
   const onOrbClick = useCallback(
     (memory: Memory, idx: number) => {
       if (phase !== "SHELF") return;
@@ -311,18 +370,17 @@ function SceneContent() {
       lastSelectedIndex.current = idx;
       selectMemory(memory.id);
       setPhase("ZOOMED");
-      setDofFocus(0.0065);
       const target = isTopShelf(idx)
         ? (isPortrait ? marker.zoom1Mobile : marker.zoom1Desktop)
         : (isPortrait ? marker.zoom2Mobile : marker.zoom2Desktop);
-      tweenCamera(target, slot, 0.85);
+      runCameraArc(target, slot, 1.05);
     },
-    [isPortrait, marker, phase, selectMemory, setPhase, slotForIndex, tweenCamera]
+    [isPortrait, marker, phase, selectMemory, setPhase, slotForIndex, runCameraArc]
   );
 
   const goShelf = useCallback(() => {
     setDeskZoom(0);
-    setDofFocus(0);
+    setFlying(null);
     selectMemory(null);
     setPlayback(null);
     disposePlaybackResources();
@@ -330,8 +388,8 @@ function SceneContent() {
     const idx = lastSelectedIndex.current;
     const slot = slotForIndex(Math.min(idx, marker.slots.length - 1));
     const start = isPortrait ? marker.startMobile : marker.startDesktop;
-    tweenCamera(start, slot, 1.05);
-  }, [disposePlaybackResources, isPortrait, marker, selectMemory, setDeskZoom, setPhase, setPlayback, slotForIndex, tweenCamera]);
+    runCameraArc(start, slot, 1.35);
+  }, [disposePlaybackResources, isPortrait, marker, selectMemory, setDeskZoom, setPhase, setPlayback, slotForIndex, runCameraArc]);
 
   const startWatch = useCallback(async () => {
     if (phase !== "ZOOMED" || !selectedMemoryId) return;
@@ -342,7 +400,6 @@ function SceneContent() {
     lastSelectedIndex.current = idx;
 
     setPhase("TRANSITION");
-    setDofFocus(0);
     setFlying({ memory, pos: from.clone() });
 
     if (telegramId) {
@@ -352,7 +409,7 @@ function SceneContent() {
         .finally(() => setLoadingPlayback(false));
     }
 
-    tweenCamera(deskPosTarget, currentPlanePos, 1.5);
+    runCameraArc(deskEyeExtended, currentPlanePos, 2.15);
 
     const p0 = from.clone();
     const p2 = to.clone();
@@ -371,7 +428,7 @@ function SceneContent() {
     });
   }, [
     currentPlanePos,
-    deskPosTarget,
+    deskEyeExtended,
     initData,
     marker.stand,
     memories,
@@ -382,7 +439,7 @@ function SceneContent() {
     setPlayback,
     slotForIndex,
     telegramId,
-    tweenCamera,
+    runCameraArc,
   ]);
 
   const backFromDesk = useCallback(() => {
@@ -398,7 +455,7 @@ function SceneContent() {
     updateProjectionMaterial(null);
 
     const start = isPortrait ? marker.startMobile : marker.startDesktop;
-    tweenCamera(start, to, 1.35);
+    runCameraArc(start, to, 1.95);
 
     const p1 = new THREE.Vector3((from.x + to.x) / 2 + 0.25, Math.max(from.y, to.y) + 0.9, (from.z + to.z) / 2 + 0.05);
     const progress = { t: 0 };
@@ -409,7 +466,7 @@ function SceneContent() {
       onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, from, p1, to) } : cur)),
       onComplete: goShelf,
     });
-  }, [deskMemoryId, disposePlaybackResources, goShelf, isPortrait, marker, memories, phase, setPhase, slotForIndex, tweenCamera, updateProjectionMaterial]);
+  }, [deskMemoryId, disposePlaybackResources, goShelf, isPortrait, marker, memories, phase, setPhase, slotForIndex, runCameraArc, updateProjectionMaterial]);
 
   useEffect(() => {
     window.addEventListener("scene:watch", startWatch);
@@ -445,21 +502,22 @@ function SceneContent() {
         );
       })}
 
-      {deskMemoryId && (() => {
-        const mem = memories.find((m) => m.id === deskMemoryId);
-        if (!mem) return null;
-        return (
-          <MemoryOrb
-            position={[marker.stand.x, marker.stand.y, marker.stand.z]}
-            radius={ORB_RADIUS}
-            color={mem.color}
-            orbIndex={0}
-            previewUrl={mem.previewUrl}
-            isSelected
-            isTransitioning={false}
-          />
-        );
-      })()}
+      {deskMemoryId &&
+        (() => {
+          const mem = memories.find((m) => m.id === deskMemoryId);
+          if (!mem) return null;
+          return (
+            <MemoryOrb
+              position={[marker.stand.x, marker.stand.y, marker.stand.z]}
+              radius={ORB_RADIUS}
+              color={mem.color}
+              orbIndex={0}
+              previewUrl={mem.previewUrl}
+              isSelected
+              isTransitioning={false}
+            />
+          );
+        })()}
 
       {flying && (
         <MemoryOrb
@@ -473,22 +531,22 @@ function SceneContent() {
         />
       )}
 
-      <ambientLight intensity={0.3} color="#8d6ad6" />
-      <pointLight position={[4.6, 2.7, -1.5]} intensity={1.15} color="#f4d1b5" />
-      <pointLight position={[-6.5, 3.2, -5.5]} intensity={1.1} color="#a2a7ff" />
-      <Environment preset="studio" />
-
-      <EffectComposer>
-        <Bloom intensity={0.75} luminanceThreshold={0.6} luminanceSmoothing={0.3} />
-        <DepthOfField focusDistance={dofFocus} focalLength={0.02} bokehScale={dofFocus > 0 ? 2.4 : 0} />
-      </EffectComposer>
+      <ambientLight intensity={0.42} color="#a89bc8" />
+      <hemisphereLight args={["#c4b8e8", "#1a1025", 0.35]} />
+      <pointLight position={[4.6, 2.7, -1.5]} intensity={0.55} color="#f0dcc8" />
+      <pointLight position={[-6.5, 3.2, -5.5]} intensity={0.55} color="#8890c8" />
     </>
   );
 }
 
 export function Scene() {
   return (
-    <Canvas camera={{ position: [4.52, 1.1, -2.4], fov: 47, near: 0.01, far: 100 }} gl={{ antialias: true }} dpr={[1, 2]} style={{ width: "100%", height: "100%" }}>
+    <Canvas
+      camera={{ position: [4.52, 1.1, -2.4], fov: 47, near: 0.01, far: 100 }}
+      gl={{ antialias: true, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping }}
+      dpr={[1, 1.5]}
+      style={{ width: "100%", height: "100%" }}
+    >
       <Suspense fallback={null}>
         <SceneContent />
       </Suspense>

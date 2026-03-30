@@ -804,17 +804,11 @@ app.get("/api/memories", async (req, res) => {
 
   const memories = await Promise.all(
     result.rows.map(async (m) => {
-      let previewUrl = null;
-      try {
-        // Priority: explicit preview -> photo itself -> no preview
-        const previewFileId = m.preview_file_id || (m.media_type === "photo" ? m.file_id : null);
-        if (previewFileId) {
-          const link = await bot.telegram.getFileLink(previewFileId);
-          previewUrl = link.toString();
-        }
-      } catch (error) {
-        previewUrl = null;
-      }
+      const previewFileId = m.preview_file_id || (m.media_type === "photo" ? m.file_id : null);
+      const previewUrl =
+        previewFileId != null
+          ? `/api/memory/${encodeURIComponent(m.id)}/preview?telegramId=${encodeURIComponent(telegramId)}`
+          : null;
       return {
         id: m.id,
         color: m.color,
@@ -885,6 +879,42 @@ app.get("/api/memory/:id/media", async (req, res) => {
   } catch (error) {
     if (!res.headersSent) {
       return res.status(500).json({ error: "Media stream failed" });
+    }
+  }
+});
+
+/** Preview thumbnail / photo for shelf orbs — same-origin for WebGL TextureLoader. */
+app.get("/api/memory/:id/preview", async (req, res) => {
+  const telegramId = String(req.query.telegramId || "");
+  if (!telegramId) return res.status(400).json({ error: "telegramId is required" });
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) return res.status(403).json({ error: "Forbidden" });
+
+  const result = await pool.query("SELECT * FROM memories WHERE id = $1", [req.params.id]);
+  if (result.rowCount === 0) return res.status(404).json({ error: "Memory not found" });
+  const memory = result.rows[0];
+  const member = await getMembership(user.id, memory.room_id);
+  if (!member) return res.status(403).json({ error: "Forbidden" });
+
+  const previewFileId = memory.preview_file_id || (memory.media_type === "photo" ? memory.file_id : null);
+  if (!previewFileId) return res.status(404).json({ error: "No preview" });
+
+  try {
+    const link = await bot.telegram.getFileLink(previewFileId);
+    const upstream = await fetch(link.href);
+    if (!upstream.ok) {
+      return res.status(502).json({ error: "Upstream fetch failed" });
+    }
+    const ct = upstream.headers.get("content-type");
+    if (ct) res.setHeader("Content-Type", ct);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    if (!upstream.body) {
+      return res.status(502).json({ error: "Empty body" });
+    }
+    await pipeline(Readable.fromWeb(upstream.body), res);
+  } catch (error) {
+    if (!res.headersSent) {
+      return res.status(500).json({ error: "Preview stream failed" });
     }
   }
 });

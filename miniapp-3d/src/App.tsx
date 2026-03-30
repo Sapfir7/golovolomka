@@ -16,14 +16,15 @@ import { fetchRooms, fetchMemories } from "./api/client";
 import "./index.css";
 
 function getTelegramId(): string | null {
-  // 1. From Telegram WebApp context (production)
   const tgUser = WebApp.initDataUnsafe?.user;
   if (tgUser?.id) return String(tgUser.id);
 
-  // 2. From URL param (local dev / testing)
   const params = new URLSearchParams(window.location.search);
   const fromUrl = params.get("telegramId");
   if (fromUrl) return fromUrl;
+
+  const devId = import.meta.env.VITE_DEV_TELEGRAM_ID;
+  if (import.meta.env.DEV && devId) return String(devId);
 
   return null;
 }
@@ -59,8 +60,8 @@ export default function App() {
     if (id) {
       setAuth(id, data);
     } else {
-      setError("Откройте приложение через Telegram.");
-      setPhase("SHELF"); // show scene anyway in dev
+      setError("Откройте из Telegram или укажите ?telegramId=… / VITE_DEV_TELEGRAM_ID для браузера.");
+      setPhase("SHELF");
     }
   }, [setAuth, setError, setPhase]);
 
