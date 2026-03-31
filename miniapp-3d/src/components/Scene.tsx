@@ -10,8 +10,8 @@ import type { Memory, Playback } from "../types";
 import { fetchPlayback } from "../api/client";
 import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
-/** Сцена `gol_v3_2.glb` (камеры, свет, Erkan, слоты, temp1–temp3). */
-const GLB_URL = `${import.meta.env.BASE_URL}gol_v3_2.glb`;
+/** Сцена `temp7/temp7.gltf` + `temp7.bin` (камеры, свет, Erkan, слоты, temp1–temp3). Исходник Blender: `blender/temp7.blend`. */
+const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp7/temp7.gltf`;
 const ORB_RADIUS = 0.1125;
 
 /** UV плоскости Erkan из Blender — при необходимости подкрути (раньше для старой плоскости был π/2). */
@@ -100,7 +100,7 @@ const _desiredPos = new THREE.Vector3();
 
 function SceneContent() {
   const { camera } = useThree();
-  const { scene } = useGLTF(GLB_URL);
+  const { scene } = useGLTF(SCENE_MODEL_URL);
   const model = useMemo(() => scene.clone(true), [scene]);
 
   const phase = useStore((s) => s.phase);
@@ -780,4 +780,4 @@ export function Scene() {
   );
 }
 
-useGLTF.preload(GLB_URL);
+useGLTF.preload(SCENE_MODEL_URL);
