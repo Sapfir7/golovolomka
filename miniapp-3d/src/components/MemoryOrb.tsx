@@ -1,8 +1,5 @@
 /**
- * MemoryOrb — шар воспоминания: спокойный, умеренное свечение, превью на ядре.
- *
- * С превью: MeshBasicMaterial + toneMapped:false (чёткая картинка без «грязи» от лайтинга).
- * Без превью: стандартный материал с emissive.
+ * MemoryOrb — статичные шары, приглушённые; превью — квадрат из кэша (центр-кроп).
  */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
@@ -11,17 +8,17 @@ import type { MemoryColor } from "../types";
 import { getPreviewTexture } from "../previewTextureCache";
 
 export const COLOR_HEX: Record<MemoryColor, string> = {
-  yellow: "#FFE156",
-  blue: "#52C5F8",
-  red: "#FF5555",
-  purple: "#CC7FFF",
+  yellow: "#d4b84a",
+  blue: "#3a9ec9",
+  red: "#c94444",
+  purple: "#9d62c4",
 };
 
 const EMISSIVE_HEX: Record<MemoryColor, string> = {
-  yellow: "#B8860B",
-  blue: "#2A8BC4",
-  red: "#AA3333",
-  purple: "#6B4AA3",
+  yellow: "#6a5518",
+  blue: "#1e5a78",
+  red: "#662222",
+  purple: "#4a3266",
 };
 
 export interface MemoryOrbProps {
@@ -50,19 +47,20 @@ export function MemoryOrb({
   const basicRef = useRef<THREE.MeshBasicMaterial>(null!);
   const coreRef = useRef<THREE.MeshStandardMaterial>(null!);
   const phase = useMemo(() => (orbIndex * 0.73) % (Math.PI * 2), [orbIndex]);
+  const [texture, setTexture] = useState<THREE.Texture | null>(null);
 
   useFrame(({ clock }) => {
     if (!groupRef.current || isTransitioning) return;
     const t = clock.getElapsedTime();
     if (texture) {
       if (!basicRef.current) return;
-      const base = isSelected ? 0.94 : 0.9;
-      const pulse = isSelected ? Math.sin(t * 2.2 + phase) * 0.05 : Math.sin(t * 0.9 + phase) * 0.04;
-      basicRef.current.opacity = Math.min(1, base + pulse);
+      const base = isSelected ? 0.88 : 0.84;
+      const pulse = isSelected ? Math.sin(t * 1.8 + phase) * 0.03 : Math.sin(t * 0.7 + phase) * 0.02;
+      basicRef.current.opacity = Math.min(0.95, base + pulse);
     } else {
       if (!coreRef.current) return;
-      const base = isSelected ? 0.42 : 0.28;
-      const pulse = isSelected ? Math.sin(t * 2.2 + phase) * 0.06 : Math.sin(t * 0.9 + phase) * 0.03;
+      const base = isSelected ? 0.22 : 0.14;
+      const pulse = isSelected ? Math.sin(t * 1.8 + phase) * 0.04 : Math.sin(t * 0.7 + phase) * 0.02;
       coreRef.current.emissiveIntensity = base + pulse;
     }
   });
@@ -77,7 +75,6 @@ export function MemoryOrb({
 
   const hex = COLOR_HEX[color];
   const emissive = EMISSIVE_HEX[color];
-  const [texture, setTexture] = useState<THREE.Texture | null>(null);
 
   useEffect(() => {
     if (!previewUrl) {
@@ -96,54 +93,54 @@ export function MemoryOrb({
   useEffect(() => {
     if (!texture) return;
     const maxA = gl.capabilities.getMaxAnisotropy();
-    texture.anisotropy = Math.min(8, maxA);
+    texture.anisotropy = Math.min(6, maxA);
     texture.needsUpdate = true;
   }, [texture, gl]);
 
-  const innerScale = radius * 1.2;
+  const innerScale = radius * 1.18;
 
   return (
     <group ref={groupRef} position={position} onClick={handleClick}>
       {texture ? (
         <mesh scale={[innerScale, innerScale, innerScale]}>
-          <sphereGeometry args={[1, 40, 40]} />
+          <sphereGeometry args={[1, 28, 28]} />
           <meshBasicMaterial
             ref={basicRef}
             map={texture}
             color="#ffffff"
             toneMapped={false}
             transparent
-            opacity={0.92}
+            opacity={0.86}
             depthWrite={false}
           />
         </mesh>
       ) : (
         <mesh scale={[innerScale, innerScale, innerScale]}>
-          <sphereGeometry args={[1, 28, 28]} />
+          <sphereGeometry args={[1, 20, 20]} />
           <meshStandardMaterial
             ref={coreRef}
             color={hex}
             emissive={emissive}
-            emissiveIntensity={0.32}
-            roughness={0.6}
+            emissiveIntensity={0.16}
+            roughness={0.65}
             metalness={0}
             transparent
-            opacity={0.6}
+            opacity={0.55}
             depthWrite={false}
           />
         </mesh>
       )}
 
       <mesh>
-        <sphereGeometry args={[radius, 28, 28]} />
+        <sphereGeometry args={[radius, 20, 20]} />
         <meshStandardMaterial
           color={hex}
-          roughness={0.15}
-          metalness={0.08}
+          roughness={0.35}
+          metalness={0.05}
           transparent
-          opacity={0.35}
+          opacity={0.22}
           depthWrite={false}
-          envMapIntensity={0.5}
+          envMapIntensity={0.25}
         />
       </mesh>
     </group>

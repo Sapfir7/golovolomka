@@ -24,15 +24,18 @@ function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
         resolve(null);
         return;
       }
+      const side = Math.min(w, h);
+      const sx = (w - side) / 2;
+      const sy = (h - side) / 2;
       const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
+      canvas.width = side;
+      canvas.height = side;
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         resolve(null);
         return;
       }
-      ctx.drawImage(img, 0, 0, w, h);
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, side, side);
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.ClampToEdgeWrapping;

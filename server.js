@@ -760,6 +760,13 @@ app.get("/miniapp/", (req, res) => {
 const MINIAPP3D_DIR = path.join(__dirname, "miniapp-3d-dist");
 if (fs.existsSync(MINIAPP3D_DIR)) {
   app.use("/miniapp-3d", express.static(MINIAPP3D_DIR));
+  app.get("/miniapp-3d/gol_v3.glb", (req, res) => {
+    const v3 = path.join(__dirname, "gol_v3.glb");
+    const v1 = path.join(__dirname, "gol_v1.glb");
+    if (fs.existsSync(v3)) return res.sendFile(v3);
+    if (fs.existsSync(v1)) return res.sendFile(v1);
+    res.status(404).type("text").send("Scene GLB not found");
+  });
   app.get("/miniapp-3d/gol_v1.glb", (req, res) => {
     res.sendFile(path.join(__dirname, "gol_v1.glb"));
   });
