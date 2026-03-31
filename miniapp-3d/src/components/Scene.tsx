@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useGLTF, useTexture } from "@react-three/drei";
+import { useGLTF } from "@react-three/drei";
 import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import gsap from "gsap";
@@ -12,82 +12,10 @@ import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
 /** Сцена `gol_v3_2.glb` (камеры, свет, Erkan, слоты, temp1–temp3). */
 const GLB_URL = `${import.meta.env.BASE_URL}gol_v3_2.glb`;
-const CABINET_WOOD_TEXTURE_URL = `${import.meta.env.BASE_URL}textures/cabinet-wood.png`;
 const ORB_RADIUS = 0.1125;
 
 /** UV плоскости Erkan из Blender — при необходимости подкрути (раньше для старой плоскости был π/2). */
 const ERKAN_TEX_ROTATION = 0;
-
-/**
- * KHR_lights_punctual в канделах/люксах. Экспорт Blender иногда даёт ~1e5 cd (пересвет с ACES),
- * иногда ~1e3–1e4 (gol_v3_2). Масштабируем по порогу; при смене сцены подкрути пороги/cap.
- */
-const GLB_LIGHT_INTENSITY_INSANE = 50000;
-const GLB_LIGHT_SCALE_INSANE = 1 / 80000;
-const GLB_LIGHT_SCALE_NORMAL = 1 / 1000;
-const GLB_SPOT_POINT_INTENSITY_CAP = 14;
-/** Слабый fill — без world из GLB тени остают очень тёмными. */
-const ROOM_HEMISPHERE_INTENSITY = 0.18;
-
-function scaleGltfPunctualLights(root: THREE.Object3D) {
-  root.traverse((obj) => {
-    const light = obj as THREE.Light;
-    if (!light.isLight) return;
-    const spot = (light as THREE.SpotLight).isSpotLight;
-    const point = (light as THREE.PointLight).isPointLight;
-    const dir = (light as THREE.DirectionalLight).isDirectionalLight;
-    if (!spot && !point && !dir) return;
-    const i0 = light.intensity;
-    const scale = i0 > GLB_LIGHT_INTENSITY_INSANE ? GLB_LIGHT_SCALE_INSANE : GLB_LIGHT_SCALE_NORMAL;
-    light.intensity = i0 * scale;
-    if (spot || point) light.intensity = Math.min(light.intensity, GLB_SPOT_POINT_INTENSITY_CAP);
-  });
-}
-
-function asStandardMaterial(m: THREE.Material): THREE.MeshStandardMaterial | null {
-  const sm = m as THREE.MeshStandardMaterial;
-  return sm.isMeshStandardMaterial ? sm : null;
-}
-
-/** Шкаф: `Cube` / `Cube.001`; пол: нода `Plane`; потолок/верх: `Plane.001` — чуть светлее пола. */
-function applyCabinetWoodAndRoomTuning(root: THREE.Object3D, woodSource: THREE.Texture) {
-  woodSource.colorSpace = THREE.SRGBColorSpace;
-  const cloneWood = (rx: number, ry: number) => {
-    const tex = woodSource.clone();
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(rx, ry);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.needsUpdate = true;
-    return tex;
-  };
-  const cabinetWood = cloneWood(1.15, 1.15);
-  const floorWood = cloneWood(5.5, 5.5);
-
-  root.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    const apply = (mat: THREE.Material) => {
-      const sm = asStandardMaterial(mat);
-      if (!sm) return;
-      if (mesh.name === "Cube" || mesh.name === "Cube.001") {
-        sm.map = cabinetWood;
-        sm.metalness = 0.04;
-        sm.roughness = 0.8;
-        sm.needsUpdate = true;
-      } else if (mesh.name === "Plane") {
-        sm.map = floorWood;
-        sm.metalness = 0;
-        sm.roughness = 0.9;
-        sm.needsUpdate = true;
-      } else if (mesh.name === "Plane.001") {
-        sm.color.lerp(new THREE.Color(1, 1, 1), 0.12);
-        sm.needsUpdate = true;
-      }
-    };
-    if (Array.isArray(mesh.material)) mesh.material.forEach(apply);
-    else apply(mesh.material);
-  });
-}
 
 function getPerspectiveCamera(root: THREE.Object3D, name: string): THREE.PerspectiveCamera | null {
   let out: THREE.PerspectiveCamera | null = null;
@@ -173,13 +101,7 @@ const _desiredPos = new THREE.Vector3();
 function SceneContent() {
   const { camera } = useThree();
   const { scene } = useGLTF(GLB_URL);
-  const woodTexture = useTexture(CABINET_WOOD_TEXTURE_URL);
-  const model = useMemo(() => {
-    const m = scene.clone(true);
-    scaleGltfPunctualLights(m);
-    applyCabinetWoodAndRoomTuning(m, woodTexture);
-    return m;
-  }, [scene, woodTexture]);
+  const model = useMemo(() => scene.clone(true), [scene]);
 
   const phase = useStore((s) => s.phase);
   const setPhase = useStore((s) => s.setPhase);
@@ -783,11 +705,6 @@ function SceneContent() {
 
   return (
     <>
-      <hemisphereLight
-        color="#d8e2ea"
-        groundColor="#1e1e22"
-        intensity={ROOM_HEMISPHERE_INTENSITY}
-      />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {
@@ -851,7 +768,7 @@ export function Scene() {
         antialias: true,
         powerPreference: "high-performance",
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 0.78,
+        toneMappingExposure: 1,
       }}
       dpr={[1, 1.75]}
       style={{ width: "100%", height: "100%" }}
@@ -864,4 +781,3 @@ export function Scene() {
 }
 
 useGLTF.preload(GLB_URL);
-useTexture.preload(CABINET_WOOD_TEXTURE_URL);
