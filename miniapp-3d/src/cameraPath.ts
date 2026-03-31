@@ -1,11 +1,10 @@
 import * as THREE from "three";
 
 /**
- * Дополнительные точки в мировых координатах между стартом камеры (зум к шару)
- * и финалом у проектора. Если массив не пуст — траектория идёт по Catmull–Rom.
+ * Дополнительные точки для дуги **камеры** (Catmull–Rom), если задать массив.
  *
- * Путь **шара** к проектору задаётся в GLB объектами **temp1 → temp2 → temp3** (temp3 —
- * последняя точка перед `pos_final`); в коде см. `orbFlightCurve` в Scene.tsx.
+ * Путь **шара**: в GLB объекты **Temp1 → Temp2 → Temp3** (регистр как в Blender),
+ * слоты **Slot00…Slot09**, экран **Erkan**, камеры **Camera.001** / **Camera**.
  */
 export const SHELF_TO_DESK_WAYPOINTS: readonly (readonly [number, number, number])[] | null = null;
 

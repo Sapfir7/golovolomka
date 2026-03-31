@@ -137,7 +137,11 @@ function SceneContent() {
     };
     const fb = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
     const slotFallback = fb(4.55, 1.45, 0.75);
-    const slots = Array.from({ length: 10 }, (_, i) => worldPos(`Slot_${String(i).padStart(2, "0")}`) ?? slotFallback.clone());
+    /** В GLB Blender: `Slot00`…`Slot09` (без подчёркивания). */
+    const slots = Array.from({ length: 10 }, (_, i) => {
+      const name = `Slot${String(i).padStart(2, "0")}`;
+      return worldPos(name) ?? slotFallback.clone();
+    });
 
     const erkanObj = get("Erkan");
     const erkanPivot = worldPos("Erkan") ?? fb(-7.81, 2.81, -3.72);
@@ -150,6 +154,14 @@ function SceneContent() {
       return v;
     })();
 
+    const firstNamed = (...names: string[]) => {
+      for (const n of names) {
+        const v = worldPos(n);
+        if (v) return v;
+      }
+      return null;
+    };
+
     const roomCenter = new THREE.Vector3();
     slots.forEach((s) => roomCenter.add(s));
     roomCenter.multiplyScalar(1 / Math.max(slots.length, 1));
@@ -161,15 +173,16 @@ function SceneContent() {
 
     return {
       slots,
-      stand: worldPos("pos_final") ?? worldPos("Pos_final") ?? fb(-3.33, 0.65, -3.67),
+      /** Маркер посадки шара у проектора; в текущем GLB нет `pos_final` — центр Erkan. */
+      stand: firstNamed("pos_final", "Pos_final") ?? erkanCenter.clone(),
       shelfFrame,
       projFrame,
       camShelf,
       camProj,
-      camTemp: worldPos("Cam_temp"),
-      temp1: worldPos("temp1"),
-      temp2: worldPos("temp2"),
-      temp3: worldPos("temp3"),
+      camTemp: firstNamed("Cam_temp", "cam_temp"),
+      temp1: firstNamed("Temp1", "temp1"),
+      temp2: firstNamed("Temp2", "temp2"),
+      temp3: firstNamed("Temp3", "temp3"),
       erkanObj,
       erkanBaseScale: erkanObj?.scale.clone() ?? fb(2.02, 1, 1.35),
       roomCenter,
@@ -177,7 +190,16 @@ function SceneContent() {
   }, [model]);
 
   useEffect(() => {
-    const hide = new Set(["Cam_temp", "temp1", "temp2", "temp3"]);
+    const hide = new Set([
+      "Cam_temp",
+      "cam_temp",
+      "Temp1",
+      "Temp2",
+      "Temp3",
+      "temp1",
+      "temp2",
+      "temp3",
+    ]);
     model.traverse((o) => {
       if (hide.has(o.name)) o.visible = false;
     });

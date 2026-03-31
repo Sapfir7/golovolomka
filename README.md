@@ -60,4 +60,4 @@ cd ..
 
 - Mini App показывает только комнаты текущего пользователя.
 - На Render Free возможен cold start.
-- Файл сцены в корне: `gol_v3.glb` (роут `/miniapp-3d/gol_v3.glb`).
+- Файл сцены в корне: `gol_v3.glb` (роут `/miniapp-3d/gol_v3.glb`). Слоты в сцене: `Slot00`…`Slot09`, экран `Erkan`, камеры `Camera.001` / `Camera`.
