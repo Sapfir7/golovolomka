@@ -760,12 +760,12 @@ app.get("/miniapp/", (req, res) => {
 const MINIAPP3D_DIR = path.join(__dirname, "miniapp-3d-dist");
 if (fs.existsSync(MINIAPP3D_DIR)) {
   app.use("/miniapp-3d", express.static(MINIAPP3D_DIR));
-  app.get("/miniapp-3d/gol_v3.glb", (req, res) => {
-    const v3 = path.join(__dirname, "gol_v3.glb");
-    if (!fs.existsSync(v3)) {
-      return res.status(404).type("text").send("gol_v3.glb not found");
+  app.get("/miniapp-3d/gol_v3_2.glb", (req, res) => {
+    const glb = path.join(__dirname, "gol_v3_2.glb");
+    if (!fs.existsSync(glb)) {
+      return res.status(404).type("text").send("gol_v3_2.glb not found");
     }
-    res.sendFile(v3);
+    res.sendFile(glb);
   });
   // SPA fallback — serve index.html for all /miniapp-3d/* routes
   app.get("/miniapp-3d/*", (req, res) => {

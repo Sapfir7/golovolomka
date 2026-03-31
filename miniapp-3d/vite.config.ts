@@ -28,7 +28,7 @@ export default defineConfig({
         target: "http://localhost:3000",
         changeOrigin: true,
       },
-      "/miniapp-3d/gol_v3.glb": {
+      "/miniapp-3d/gol_v3_2.glb": {
         target: "http://localhost:3000",
         changeOrigin: true,
       },
