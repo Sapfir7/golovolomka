@@ -14,15 +14,15 @@
 - Deploy: Render Web Service
 
 ## 3D scene and assets
-- Blender export в корень репозитория: **`gol_v3.glb`** (сцена; при отсутствии файла сервер отдаёт `gol_v1.glb`).
-- HTTP: `GET /miniapp-3d/gol_v3.glb` — основной маршрут; `gol_v1.glb` остаётся для совместимости.
-- В GLB: камеры **`Camera.001`** (шкаф) и **`Camera`** (проектор), плоскость **`Erkan`**, слоты **`Slot_XX`**, опционально **`Cam_temp`**.
+- Blender export в корень репозитория: **`gol_v3.glb`** — единственный файл сцены (свет и материалы внутри GLB).
+- HTTP: `GET /miniapp-3d/gol_v3.glb` отдаёт файл из корня; без файла — 404.
+- В GLB: камеры **`Camera.001`** (шкаф), **`Camera`** (проектор), плоскость **`Erkan`**, слоты **`Slot_XX`**, **`pos_final`** у проектора; траектория летающего шара: **`temp1` → `temp2` → `temp3`** (temp3 — последняя перед проектором; маркеры скрыты в рендере). Опционально **`Cam_temp`** для дуги камеры к проектору.
 - Объект **`Cam_temp`** в GLB: проходная точка для камеры на участке **полка → проектор** (квадратичная Безье по позиции; объект в рендере скрыт, используется только world position).
 - Дополнительные точки траектории через код: `miniapp-3d/src/cameraPath.ts` (`SHELF_TO_DESK_WAYPOINTS`) — Catmull–Rom, если массив не пуст.
 - Превью фото на шарах: общий кэш `previewTextureCache.ts` (canvas + EXIF), перед фазой `SHELF` вызывается ожидание `awaitPreviewLoads` (таймаут + короткая пауза), чтобы превью не «доезжали» с задержкой.
 
 ## Key files
-- `server.js` - bot handlers, API routes, mini app static routes, `gol_v1.glb` route, startup logic.
+- `server.js` - bot handlers, API routes, mini app static routes, `gol_v3.glb` route, startup logic.
 - `miniapp/index.html` - legacy UI shell.
 - `miniapp/app.js` - legacy fetch rooms/memories, render balls.
 - `miniapp-3d/src/components/Scene.tsx` - 3D сцена, камера, проектор, слоты.

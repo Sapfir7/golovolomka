@@ -10,7 +10,7 @@ import type { Memory, Playback } from "../types";
 import { fetchPlayback } from "../api/client";
 import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
-/** Приоритет: `gol_v3.glb`; на сервере fallback на `gol_v1.glb`. */
+/** Сцена только `gol_v3.glb` (камеры, свет, Erkan, слоты, temp1–temp3). */
 const GLB_URL = `${import.meta.env.BASE_URL}gol_v3.glb`;
 const ORB_RADIUS = 0.1125;
 
@@ -60,6 +60,22 @@ function smoothArcMid(a: THREE.Vector3, b: THREE.Vector3) {
   const m = a.clone().add(b).multiplyScalar(0.5);
   m.y += 0.12;
   return m;
+}
+
+/** Путь шара: слот → temp1 → temp2 → temp3 → финал (temp3 — последняя перед проектором). */
+function orbFlightCurve(
+  from: THREE.Vector3,
+  t1: THREE.Vector3,
+  t2: THREE.Vector3,
+  t3: THREE.Vector3,
+  end: THREE.Vector3
+) {
+  return new THREE.CatmullRomCurve3(
+    [from.clone(), t1.clone(), t2.clone(), t3.clone(), end.clone()],
+    false,
+    "catmullrom",
+    0.4
+  );
 }
 
 type StoredArc =
@@ -151,6 +167,9 @@ function SceneContent() {
       camShelf,
       camProj,
       camTemp: worldPos("Cam_temp"),
+      temp1: worldPos("temp1"),
+      temp2: worldPos("temp2"),
+      temp3: worldPos("temp3"),
       erkanObj,
       erkanBaseScale: erkanObj?.scale.clone() ?? fb(2.02, 1, 1.35),
       roomCenter,
@@ -158,8 +177,9 @@ function SceneContent() {
   }, [model]);
 
   useEffect(() => {
+    const hide = new Set(["Cam_temp", "temp1", "temp2", "temp3"]);
     model.traverse((o) => {
-      if (o.name === "Cam_temp") o.visible = false;
+      if (hide.has(o.name)) o.visible = false;
     });
   }, [model]);
 
@@ -546,26 +566,47 @@ function SceneContent() {
 
     runCameraArc(pEnd, lEnd, 1.05, { storeForReverse: true, positionMid: posMid });
 
-    const p0 = from.clone();
-    const p2 = to.clone();
-    const p1 = new THREE.Vector3((p0.x + p2.x) / 2 + 0.28, Math.max(p0.y, p2.y) + 0.75, (p0.z + p2.z) / 2 + 0.12);
+    const { temp1, temp2, temp3 } = marker;
+    const orbDur = 1.35;
     const progress = { t: 0 };
-    gsap.to(progress, {
-      t: 1,
-      duration: 1.15,
-      ease: "power1.inOut",
-      onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, p0, p1, p2) } : cur)),
-      onComplete: () => {
-        setFlying(null);
-        setDeskMemoryId(memory.id);
-        setPhase("DESK");
-      },
-    });
+    if (temp1 && temp2 && temp3) {
+      const curve = orbFlightCurve(from, temp1, temp2, temp3, to);
+      gsap.to(progress, {
+        t: 1,
+        duration: orbDur,
+        ease: "power1.inOut",
+        onUpdate: () =>
+          setFlying((cur) => (cur ? { ...cur, pos: curve.getPoint(progress.t) } : cur)),
+        onComplete: () => {
+          setFlying(null);
+          setDeskMemoryId(memory.id);
+          setPhase("DESK");
+        },
+      });
+    } else {
+      const p0 = from.clone();
+      const p2 = to.clone();
+      const p1 = new THREE.Vector3((p0.x + p2.x) / 2 + 0.28, Math.max(p0.y, p2.y) + 0.75, (p0.z + p2.z) / 2 + 0.12);
+      gsap.to(progress, {
+        t: 1,
+        duration: orbDur,
+        ease: "power1.inOut",
+        onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, p0, p1, p2) } : cur)),
+        onComplete: () => {
+          setFlying(null);
+          setDeskMemoryId(memory.id);
+          setPhase("DESK");
+        },
+      });
+    }
   }, [
     initData,
     marker.camTemp,
     marker.projFrame,
     marker.stand,
+    marker.temp1,
+    marker.temp2,
+    marker.temp3,
     memories,
     phase,
     selectedMemoryId,
@@ -591,17 +632,29 @@ function SceneContent() {
     updateProjectionMaterial(null);
 
     const camDur = lastArcRef.current?.duration ?? 1.05;
-    const orbDur = 1.05;
+    const orbDur = 1.25;
     runCameraArcReverse(1);
 
-    const p1 = new THREE.Vector3((from.x + to.x) / 2 + 0.2, Math.max(from.y, to.y) + 0.75, (from.z + to.z) / 2 + 0.04);
+    const { temp1, temp2, temp3 } = marker;
     const progress = { t: 0 };
-    gsap.to(progress, {
-      t: 1,
-      duration: orbDur,
-      ease: "power1.inOut",
-      onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, from, p1, to) } : cur)),
-    });
+    if (temp1 && temp2 && temp3) {
+      const curve = orbFlightCurve(from, temp3, temp2, temp1, to);
+      gsap.to(progress, {
+        t: 1,
+        duration: orbDur,
+        ease: "power1.inOut",
+        onUpdate: () =>
+          setFlying((cur) => (cur ? { ...cur, pos: curve.getPoint(progress.t) } : cur)),
+      });
+    } else {
+      const p1 = new THREE.Vector3((from.x + to.x) / 2 + 0.2, Math.max(from.y, to.y) + 0.75, (from.z + to.z) / 2 + 0.04);
+      gsap.to(progress, {
+        t: 1,
+        duration: orbDur,
+        ease: "power1.inOut",
+        onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, from, p1, to) } : cur)),
+      });
+    }
     gsap.delayedCall(Math.max(camDur, orbDur), goShelf);
   }, [
     deskMemoryId,

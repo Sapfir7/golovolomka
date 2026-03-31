@@ -7,7 +7,7 @@ Telegram bot + Mini App с комнатами и ролями доступа:
 - просмотр медиа по типу (`video`/`photo`/`text`)
 - редактирование текста и удаление воспоминаний в mini app для `owner/editor`
 - PostgreSQL storage
-- 3D Mini App на React Three Fiber с сценой из Blender (`gol_v3.glb`, fallback `gol_v1.glb`)
+- 3D Mini App на React Three Fiber с сценой из Blender (`gol_v3.glb`)
 
 ## 1) Установка
 
@@ -60,4 +60,4 @@ cd ..
 
 - Mini App показывает только комнаты текущего пользователя.
 - На Render Free возможен cold start.
-- Файл сцены: `gol_v3.glb` в корне (`/miniapp-3d/gol_v3.glb`; если нет — отдаётся `gol_v1.glb`).
+- Файл сцены в корне: `gol_v3.glb` (роут `/miniapp-3d/gol_v3.glb`).
