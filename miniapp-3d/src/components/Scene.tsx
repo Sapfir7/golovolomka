@@ -246,7 +246,7 @@ function SceneContent() {
 
   /* ── Camera lerp ── */
   useFrame((_, delta) => {
-    const alpha = 1 - Math.exp(-4.5 * delta);
+    const alpha = 1 - Math.exp(-6 * delta);
     _desiredPos.copy(cameraTarget.current.pos);
     camera.position.lerp(_desiredPos, alpha);
     lookCurrent.current.lerp(cameraTarget.current.look, alpha);
@@ -399,35 +399,35 @@ function SceneContent() {
     const t01 = marker.traj01 ?? fMain.pos.clone().add(new THREE.Vector3(2, 0.5, 0));
     const t02 = marker.traj02 ?? t01.clone().add(new THREE.Vector3(0, -1.2, 0));
 
-    /* 1) Cam: shelf → Camera_01 → Camera_02, Orb: slot → traj00 → traj01 (0.9s, simultaneously) */
+    /* 1) Cam: shelf → Camera_01 → Camera_02, Orb: slot → traj00 → traj01 (1.8s, simultaneously) */
     tl.add(() => {
-      animateCam([marker.shelfFrame, f01, f02], 0.9);
-      animateOrb(slot, [t00, t01], 0.9);
+      animateCam([marker.shelfFrame, f01, f02], 1.8);
+      animateOrb(slot, [t00, t01], 1.8);
     }, 0);
 
-    /* 2) Cam pauses 0.4s at Camera_02; orb descends traj01 → traj02 (0.4s) */
+    /* 2) Cam pauses 0.6s at Camera_02; orb descends traj01 → traj02 (0.7s) */
     tl.add(() => {
-      animateOrb(t01, [t02], 0.4);
-    }, 0.9);
+      animateOrb(t01, [t02], 0.7);
+    }, 1.8);
 
-    /* 3) Cam: Camera_02 → Camera_03 → Camera_main (0.9s); memory fades in on screen */
+    /* 3) Cam: Camera_02 → Camera_03 → Camera_main (1.6s); memory fades in on screen */
     const fadeIn = { v: 0 };
     tl.add(() => {
       setDeskMemoryId(memory.id);
       setFlying(null);
       const tex = playbackTexRef.current;
       if (tex) updateScreenMaterial(tex, 0);
-      animateCam([f02, f03, fMain], 0.9);
+      animateCam([f02, f03, fMain], 1.6);
       gsap.to(fadeIn, {
-        v: 1, duration: 0.9, ease: "power2.in",
+        v: 1, duration: 1.6, ease: "power2.in",
         onUpdate: () => setScreenOpacity(fadeIn.v),
       });
-    }, 1.3);
+    }, 2.5);
 
     tl.add(() => {
       setScreenOpacity(1);
       setPhase("DESK");
-    }, 2.2);
+    }, 4.1);
   }, [
     initData, loadPlaybackTexture, marker, memories, phase,
     selectedMemoryId, selectMemory, setLoadingPlayback, setPhase,
@@ -452,29 +452,29 @@ function SceneContent() {
     const t03 = marker.traj03 ?? marker.camMainFrame.pos.clone().add(new THREE.Vector3(2, 0, 0));
     const t04 = marker.traj04 ?? slot.clone().add(new THREE.Vector3(0, 0.3, -2));
 
-    /* 1) Fade out memory (0.5s) */
+    /* 1) Fade out memory (0.8s) */
     const fadeOut = { v: 1 };
     tl.add(() => {
       gsap.to(fadeOut, {
-        v: 0, duration: 0.5, ease: "power2.out",
+        v: 0, duration: 0.8, ease: "power2.out",
         onUpdate: () => setScreenOpacity(fadeOut.v),
       });
     }, 0);
 
-    /* 2) Once faded, orb appears at traj_03; cam+orb fly home simultaneously (1.0s) */
+    /* 2) Once faded, orb appears at traj_03; cam+orb fly home simultaneously (1.8s) */
     tl.add(() => {
       setDeskMemoryId(null);
       disposePlaybackResources(); resetScreenScale(); updateScreenMaterial(null);
       setScreenOpacity(0);
       setFlying({ memory, pos: t03.clone() });
-      animateCam([marker.camMainFrame, f04, marker.shelfFrame], 1.0);
-      animateOrb(t03, [t04, slot], 1.0);
-    }, 0.5);
+      animateCam([marker.camMainFrame, f04, marker.shelfFrame], 1.8);
+      animateOrb(t03, [t04, slot], 1.8);
+    }, 0.85);
 
     tl.add(() => {
       setFlying(null); selectMemory(null); setPlayback(null);
       setPhase("SHELF");
-    }, 1.55);
+    }, 2.7);
   }, [
     deskMemoryId, disposePlaybackResources, marker, memories, phase,
     resetScreenScale, selectMemory, setPhase, setPlayback, slotForIndex, updateScreenMaterial,
@@ -515,18 +515,6 @@ function SceneContent() {
           />
         );
       })}
-
-      {deskMemoryId && (() => {
-        const mem = memories.find((m) => m.id === deskMemoryId);
-        if (!mem) return null;
-        return (
-          <MemoryOrb
-            position={[marker.screenCenter.x, marker.screenCenter.y - 1.2, marker.screenCenter.z]}
-            radius={ORB_RADIUS} color={mem.color} orbIndex={0}
-            previewUrl={mem.previewUrl} isSelected isTransitioning={false}
-          />
-        );
-      })()}
 
       {flying && (
         <MemoryOrb

@@ -5,12 +5,14 @@
  *  1. Initialize Telegram WebApp SDK (expand, set header color, theme)
  *  2. Extract `telegramId` and `initData` from Telegram context (or URL param for dev)
  *  3. Load rooms + active room memories on mount
- *  4. Render the 3D Scene + 2D UIOverlay
+ *  4. Show loading screen until GLB scene + preview textures are ready
+ *  5. Render the 3D Scene + 2D UIOverlay
  */
 import { useEffect } from "react";
 import WebApp from "@twa-dev/sdk";
 import { Scene } from "./components/Scene";
 import { UIOverlay } from "./components/UIOverlay";
+import { LoadingOverlay } from "./components/LoadingOverlay";
 import { useStore } from "./store/useStore";
 import { fetchRooms, fetchMemories } from "./api/client";
 import { awaitPreviewLoads, preloadAllPreviews } from "./previewTextureCache";
@@ -45,7 +47,6 @@ export default function App() {
   const setPhase = useStore((s) => s.setPhase);
   const setError = useStore((s) => s.setError);
 
-  // ── Telegram SDK init ────────────────────────────────────────────────────
   useEffect(() => {
     try {
       WebApp.ready();
@@ -53,7 +54,7 @@ export default function App() {
       WebApp.setBackgroundColor("#000000");
       WebApp.setHeaderColor("#000000");
     } catch {
-      // Not in Telegram context — ignore
+      // Not in Telegram context
     }
 
     const id = getTelegramId();
@@ -66,22 +67,19 @@ export default function App() {
     }
   }, [setAuth, setError, setPhase]);
 
-  // ── Load rooms + memories ────────────────────────────────────────────────
   useEffect(() => {
     if (!telegramId) return;
 
     async function bootstrap() {
       try {
-        // Load rooms
         const { rooms, activeRoomId } = await fetchRooms(telegramId!, initData);
         setRooms(rooms, activeRoomId);
 
-        // Determine which room to show
         const urlRoomId = getRoomIdFromUrl();
         const targetRoomId = urlRoomId ?? activeRoomId ?? rooms[0]?.id ?? null;
 
         if (!targetRoomId) {
-          setPhase("SHELF"); // empty state
+          setPhase("SHELF");
           return;
         }
 
@@ -92,10 +90,10 @@ export default function App() {
         const { memories } = await fetchMemories(telegramId!, targetRoomId, initData);
         const previewUrls = memories.map((m) => m.previewUrl);
         preloadAllPreviews(previewUrls);
-        await awaitPreviewLoads(previewUrls, { timeoutMs: 12_000, minWaitMs: 450 });
+        await awaitPreviewLoads(previewUrls, { timeoutMs: 15_000, minWaitMs: 600 });
         setMemories(memories);
         setPhase("SHELF");
-      } catch (e) {
+      } catch {
         setError("Ошибка загрузки данных.");
         setPhase("SHELF");
       }
@@ -108,6 +106,7 @@ export default function App() {
     <div className="relative w-full h-full bg-black overflow-hidden">
       <Scene />
       <UIOverlay />
+      <LoadingOverlay />
     </div>
   );
 }

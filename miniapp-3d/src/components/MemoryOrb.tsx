@@ -1,9 +1,5 @@
 /**
  * MemoryOrb — glass sphere with a flat circular photo disc inside, tinted to the orb color.
- *
- * Visual reference: ball.png — the photo is center-cropped 1:1,
- * placed on a flat disc inside the glass sphere, with a circular mask
- * and a color tint/filter overlay matching the orb color.
  */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
@@ -11,8 +7,6 @@ import * as THREE from "three";
 import type { MemoryColor } from "../types";
 import { getPreviewTexture } from "../previewTextureCache";
 import { COLOR_HEX, EMISSIVE_HEX } from "../memoryPalette";
-
-/* ── Disc shader: circular mask + color tint ── */
 
 const discVert = `
 varying vec2 vUv;
@@ -27,6 +21,7 @@ precision highp float;
 uniform sampler2D map;
 uniform vec3 uTint;
 uniform float uOpacity;
+varying vec2 vUv;
 void main() {
   vec2 c = vUv - 0.5;
   float dist = length(c);
@@ -35,13 +30,11 @@ void main() {
   vec4 tex = texture2D(map, vUv);
   vec3 rgb = tex.rgb;
 
-  // Color-tint: blend toward the orb color (like a colored glass filter)
   float lum = dot(rgb, vec3(0.299, 0.587, 0.114));
-  vec3 tinted = mix(rgb, uTint * (0.6 + 0.8 * lum), 0.45);
+  vec3 tinted = mix(rgb, uTint * (0.6 + 0.8 * lum), 0.38);
 
-  // Soft edge for the circle
-  float edge = smoothstep(0.5, 0.46, dist);
-  gl_FragColor = vec4(tinted, edge * uOpacity * tex.a);
+  float edge = smoothstep(0.5, 0.44, dist);
+  gl_FragColor = vec4(tinted, edge * uOpacity);
 }
 `;
 
@@ -97,7 +90,7 @@ export function MemoryOrb({
       uniforms: {
         map: { value: texture },
         uTint: { value: tintColor.clone() },
-        uOpacity: { value: 0.92 },
+        uOpacity: { value: 1.0 },
       },
       vertexShader: discVert,
       fragmentShader: discFrag,
@@ -117,11 +110,11 @@ export function MemoryOrb({
     const t = clock.getElapsedTime();
 
     if (discMatRef.current) {
-      const base = isSelected ? 0.95 : 0.9;
-      const pulse = isSelected ? Math.sin(t * 1.8 + phase) * 0.03 : Math.sin(t * 0.7 + phase) * 0.02;
-      discMatRef.current.uniforms.uOpacity.value = Math.min(0.98, base + pulse);
+      const base = isSelected ? 0.98 : 0.95;
+      const pulse = isSelected ? Math.sin(t * 1.8 + phase) * 0.02 : Math.sin(t * 0.7 + phase) * 0.015;
+      discMatRef.current.uniforms.uOpacity.value = Math.min(1.0, base + pulse);
     } else if (coreRef.current) {
-      const base = isSelected ? 0.4 : 0.3;
+      const base = isSelected ? 0.45 : 0.35;
       const pulse = isSelected ? Math.sin(t * 1.8 + phase) * 0.06 : Math.sin(t * 0.7 + phase) * 0.03;
       coreRef.current.emissiveIntensity = base + pulse;
     }
@@ -132,28 +125,26 @@ export function MemoryOrb({
     [onClick]
   );
 
-  const discRadius = radius * 0.82;
+  const discRadius = radius * 0.85;
 
   return (
     <group ref={groupRef} position={position} onClick={handleClick}>
-      {/* Inner photo disc (flat circle with circular mask + tint) */}
       {texture && discMat ? (
-        <mesh material={discMat} rotation={[0, 0, 0]}>
+        <mesh material={discMat}>
           <planeGeometry args={[discRadius * 2, discRadius * 2]} />
         </mesh>
       ) : (
-        /* Emissive core when no texture */
         <mesh>
-          <sphereGeometry args={[radius * 0.6, 16, 16]} />
+          <sphereGeometry args={[radius * 0.65, 16, 16]} />
           <meshStandardMaterial
             ref={coreRef}
             color={hex}
             emissive={emissive}
-            emissiveIntensity={0.35}
-            roughness={0.5}
+            emissiveIntensity={0.4}
+            roughness={0.45}
             metalness={0}
             transparent
-            opacity={0.8}
+            opacity={0.85}
             depthWrite={false}
           />
         </mesh>
@@ -161,19 +152,19 @@ export function MemoryOrb({
 
       {/* Outer glass sphere */}
       <mesh>
-        <sphereGeometry args={[radius, 24, 24]} />
+        <sphereGeometry args={[radius, 28, 28]} />
         <meshPhysicalMaterial
           color={hex}
-          roughness={0.08}
+          roughness={0.05}
           metalness={0.0}
           transparent
-          opacity={0.28}
-          transmission={0.6}
-          thickness={0.4}
-          ior={1.45}
-          envMapIntensity={0.5}
-          clearcoat={0.3}
-          clearcoatRoughness={0.1}
+          opacity={0.45}
+          transmission={0.35}
+          thickness={0.5}
+          ior={1.5}
+          envMapIntensity={0.6}
+          clearcoat={0.5}
+          clearcoatRoughness={0.08}
           depthWrite={false}
           side={THREE.FrontSide}
         />
