@@ -10,12 +10,38 @@ import type { Memory, Playback } from "../types";
 import { fetchPlayback } from "../api/client";
 import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
-/** Основная сцена: `temp2.glb` (геометрия, текстуры, свет из экспорта — без донастройки в коде). */
+/** Основная сцена: `temp2.glb` (геометрия, текстуры, свет из экспорта). */
 const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp2.glb`;
 const ORB_RADIUS = 0.1125;
 
+/**
+ * Подстройка света: в экспорте temp2 spot был 0 cd, Sun ~0.044 lx — в комнате почти темно.
+ * Целевые значения (Three.js, физ. свет): заметно, но без сильного пересвета при ACES + exposure 0.92.
+ *
+ * - Spot (если intensity меньше 0.02): **38 cd** (канделы)
+ * - Directional (если intensity меньше 0.12 lx): **1.35 lx** (люксы)
+ */
+const TUNED_SPOT_INTENSITY_CD = 38;
+const TUNED_DIRECTIONAL_INTENSITY_LX = 1.35;
+const SPOT_INTENSITY_REPLACE_BELOW = 0.02;
+const DIRECTIONAL_INTENSITY_REPLACE_BELOW = 0.12;
+
 /** UV плоскости Erkan из Blender — при необходимости подкрути (раньше для старой плоскости был π/2). */
 const ERKAN_TEX_ROTATION = 0;
+
+function applyTemp2LightTuning(root: THREE.Object3D) {
+  root.traverse((obj) => {
+    const light = obj as THREE.Light;
+    if (!light.isLight) return;
+    if ((light as THREE.SpotLight).isSpotLight) {
+      if (light.intensity < SPOT_INTENSITY_REPLACE_BELOW) light.intensity = TUNED_SPOT_INTENSITY_CD;
+      return;
+    }
+    if ((light as THREE.DirectionalLight).isDirectionalLight) {
+      if (light.intensity < DIRECTIONAL_INTENSITY_REPLACE_BELOW) light.intensity = TUNED_DIRECTIONAL_INTENSITY_LX;
+    }
+  });
+}
 
 function getPerspectiveCamera(root: THREE.Object3D, name: string): THREE.PerspectiveCamera | null {
   let out: THREE.PerspectiveCamera | null = null;
@@ -101,7 +127,11 @@ const _desiredPos = new THREE.Vector3();
 function SceneContent() {
   const { camera } = useThree();
   const { scene } = useGLTF(SCENE_MODEL_URL);
-  const model = useMemo(() => scene.clone(true), [scene]);
+  const model = useMemo(() => {
+    const m = scene.clone(true);
+    applyTemp2LightTuning(m);
+    return m;
+  }, [scene]);
 
   const phase = useStore((s) => s.phase);
   const setPhase = useStore((s) => s.setPhase);
@@ -768,7 +798,7 @@ export function Scene() {
         antialias: true,
         powerPreference: "high-performance",
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1,
+        toneMappingExposure: 0.92,
       }}
       dpr={[1, 1.75]}
       style={{ width: "100%", height: "100%" }}
