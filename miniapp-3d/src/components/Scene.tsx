@@ -5,8 +5,13 @@ import * as THREE from "three";
 import gsap from "gsap";
 import { useStore } from "../store/useStore";
 import { MemoryOrb } from "./MemoryOrb";
-import { DeskVignette } from "./DeskVignette";
 import type { Memory, Playback } from "../types";
+import { COLOR_HEX } from "../memoryPalette";
+import { canvasSizeForPlaneAspect, drawBitmapContain } from "../utils/drawBitmapContain";
+import {
+  createErkanProjectionMaterial,
+  updateErkanVideoAspect,
+} from "../materials/erkanProjectionMaterial";
 import { fetchPlayback } from "../api/client";
 import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
@@ -147,6 +152,9 @@ function SceneContent() {
   const setPlayback = useStore((s) => s.setPlayback);
   const setLoadingPlayback = useStore((s) => s.setLoadingPlayback);
   const setDeskOrbTint = useStore((s) => s.setDeskOrbTint);
+  const deskOrbTint = useStore((s) => s.deskOrbTint);
+
+  const deskProjectionMatRef = useRef<THREE.ShaderMaterial | null>(null);
 
   const [flying, setFlying] = useState<{ memory: Memory; pos: THREE.Vector3 } | null>(null);
   const [deskMemoryId, setDeskMemoryId] = useState<string | null>(null);
@@ -264,37 +272,6 @@ function SceneContent() {
   });
   const lookCurrent = useRef(cameraTarget.current.look.clone());
 
-  /** Ширина кадра → scale.x, высота → scale.z (плоскость Erkan в GLB). */
-  const resizeErkanForMedia = useCallback(
-    (mediaWidth: number, mediaHeight: number) => {
-      const obj = marker.erkanObj;
-      if (!obj || !mediaWidth || !mediaHeight) return;
-      const base = marker.erkanBaseScale;
-      const maxX = base.x;
-      const maxZ = base.z;
-      const ar = mediaWidth / mediaHeight;
-      let sx: number;
-      let sz: number;
-      if (ar >= 1) {
-        sx = maxX;
-        sz = sx / ar;
-        if (sz > maxZ) {
-          sz = maxZ;
-          sx = sz * ar;
-        }
-      } else {
-        sz = maxZ;
-        sx = sz * ar;
-        if (sx > maxX) {
-          sx = maxX;
-          sz = sx / ar;
-        }
-      }
-      obj.scale.set(sx, base.y, sz);
-    },
-    [marker.erkanBaseScale, marker.erkanObj]
-  );
-
   const resetErkanScale = useCallback(() => {
     if (marker.erkanObj) marker.erkanObj.scale.copy(marker.erkanBaseScale);
   }, [marker.erkanBaseScale, marker.erkanObj]);
@@ -312,26 +289,40 @@ function SceneContent() {
           opacity: 0.95,
           side: THREE.DoubleSide,
         });
-      const projectionMat = (map: THREE.Texture) =>
-        new THREE.MeshBasicMaterial({
-          map,
-          color: 0xffffff,
-          toneMapped: false,
-          transparent: true,
-          opacity: 0.995,
-          side: THREE.DoubleSide,
-        });
       const obj = marker.erkanObj;
       if (!obj) return;
       obj.visible = phase === "DESK";
       const showMedia = Boolean(texture) && phase === "DESK";
+      const planeAspect =
+        marker.erkanBaseScale.x / Math.max(1e-6, marker.erkanBaseScale.z);
+      const vigTint = new THREE.Color(
+        deskOrbTint ? COLOR_HEX[deskOrbTint] : "#261a32"
+      );
+      deskProjectionMatRef.current = null;
       obj.traverse((o) => {
         const mesh = o as THREE.Mesh;
         if (!mesh.isMesh) return;
-        mesh.material = showMedia ? projectionMat(texture!) : placeholderMat();
+        const prev = mesh.material;
+        if (prev instanceof THREE.ShaderMaterial) prev.dispose();
+        if (showMedia && texture) {
+          const isVideo = texture instanceof THREE.VideoTexture;
+          const mat = createErkanProjectionMaterial(texture, {
+            shaderContain: isVideo ? 1 : 0,
+            texAspect: isVideo ? 1 : planeAspect,
+            planeAspect,
+            bg: new THREE.Color(0x0a0612),
+            vignetteTint: vigTint,
+            vignetteStrength: 0.72,
+            uvRotation: ERKAN_TEX_ROTATION,
+          });
+          deskProjectionMatRef.current = mat;
+          mesh.material = mat;
+        } else {
+          mesh.material = placeholderMat();
+        }
       });
     },
-    [marker.erkanObj, phase]
+    [deskOrbTint, marker.erkanBaseScale, marker.erkanObj, phase]
   );
 
   useEffect(() => {
@@ -361,7 +352,7 @@ function SceneContent() {
 
   useEffect(() => {
     updateProjectionMaterial(playbackTexture);
-  }, [phase, playbackTexture, updateProjectionMaterial]);
+  }, [deskOrbTint, phase, playbackTexture, updateProjectionMaterial]);
 
   const disposePlaybackResources = useCallback(() => {
     const v = deskVideoElRef.current;
@@ -447,14 +438,6 @@ function SceneContent() {
     [marker.roomCenter]
   );
 
-  const prepareTexForPlane = (tex: THREE.Texture) => {
-    tex.center.set(0.5, 0.5);
-    tex.rotation = ERKAN_TEX_ROTATION;
-    tex.wrapS = THREE.ClampToEdgeWrapping;
-    tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.needsUpdate = true;
-  };
-
   const applyPlaybackToPlane = useCallback(
     (pb: Playback | null) => {
       if (!pb || pb.mediaType === "text" || !pb.url) {
@@ -485,9 +468,12 @@ function SceneContent() {
             }
             const w = bitmap.width || 1;
             const h = bitmap.height || 1;
+            const planeAspect =
+              marker.erkanBaseScale.x / Math.max(1e-6, marker.erkanBaseScale.z);
+            const [cw, ch] = canvasSizeForPlaneAspect(planeAspect, 1024);
             const canvas = document.createElement("canvas");
-            canvas.width = w;
-            canvas.height = h;
+            canvas.width = cw;
+            canvas.height = ch;
             const ctx = canvas.getContext("2d");
             if (!ctx) {
               bitmap.close();
@@ -495,13 +481,14 @@ function SceneContent() {
               updateProjectionMaterial(null);
               return;
             }
-            ctx.drawImage(bitmap, 0, 0, w, h);
+            drawBitmapContain(ctx, bitmap, w, h, cw, ch, "#0a0612");
             bitmap.close();
             const t = new THREE.CanvasTexture(canvas);
             t.colorSpace = THREE.SRGBColorSpace;
-            t.flipY = false;
-            prepareTexForPlane(t);
-            resizeErkanForMedia(w, h);
+            t.flipY = true;
+            t.wrapS = THREE.ClampToEdgeWrapping;
+            t.wrapT = THREE.ClampToEdgeWrapping;
+            t.needsUpdate = true;
             playbackTexRef.current = t;
             setPlaybackTexture(t);
             updateProjectionMaterial(t);
@@ -527,15 +514,21 @@ function SceneContent() {
         video.autoplay = true;
         const texture = new THREE.VideoTexture(video);
         texture.colorSpace = THREE.SRGBColorSpace;
-        texture.flipY = false;
+        texture.flipY = true;
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
-        prepareTexForPlane(texture);
         video.addEventListener(
           "loadedmetadata",
           () => {
-            resizeErkanForMedia(video.videoWidth, video.videoHeight);
-            texture.needsUpdate = true;
+            const w = video.videoWidth;
+            const h = video.videoHeight;
+            const applyAspect = () => {
+              const m = deskProjectionMatRef.current;
+              if (m && w > 0 && h > 0) updateErkanVideoAspect(m, w, h);
+              texture.needsUpdate = true;
+            };
+            applyAspect();
+            requestAnimationFrame(applyAspect);
           },
           { once: true }
         );
@@ -546,7 +539,7 @@ function SceneContent() {
         updateProjectionMaterial(texture);
       }
     },
-    [disposePlaybackResources, resetErkanScale, resizeErkanForMedia, updateProjectionMaterial]
+    [disposePlaybackResources, marker.erkanBaseScale, resetErkanScale, updateProjectionMaterial]
   );
 
   useEffect(() => {
@@ -823,7 +816,6 @@ function SceneContent() {
         />
       )}
 
-      <DeskVignette />
     </>
   );
 }
