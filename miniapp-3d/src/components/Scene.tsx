@@ -26,8 +26,22 @@ const TUNED_DIRECTIONAL_INTENSITY_LX = 1.35;
 const SPOT_INTENSITY_REPLACE_BELOW = 0.02;
 const DIRECTIONAL_INTENSITY_REPLACE_BELOW = 0.12;
 
+/**
+ * Какие **ноды камер** из GLB для какого режима (имена объектов в Blender / Outliner).
+ * Если «шкаф» и «стол» перепутаны — поменяй значения местами.
+ */
+const GLTF_CAMERA_NODE_SHELF = "Camera.001";
+const GLTF_CAMERA_NODE_DESK = "Camera";
+
+/** Стартовые параметры R3F-камеры до первого кадра — совпадают с `Camera.001` в temp2.glb (при смене сцены подправь). */
+const INITIAL_CAMERA_POSITION: [number, number, number] = [3.853442668914795, 1.0901598930358887, -3.296273946762085];
+const INITIAL_CAMERA_FOV = THREE.MathUtils.radToDeg(0.6911112070083618);
+
 /** UV плоскости Erkan из Blender — при необходимости подкрути (раньше для старой плоскости был π/2). */
 const ERKAN_TEX_ROTATION = 0;
+
+const _camLocalForward = new THREE.Vector3(0, 0, -1);
+const _camWorldQuat = new THREE.Quaternion();
 
 function applyTemp2LightTuning(root: THREE.Object3D) {
   root.traverse((obj) => {
@@ -63,12 +77,13 @@ function getPerspectiveCamera(root: THREE.Object3D, name: string): THREE.Perspec
   return out;
 }
 
+/** Точка взгляда из **трансформа камеры в GLB** (локальный −Z → мир), без выдуманных углов. */
 function cameraFraming(cam: THREE.PerspectiveCamera, lookDist = 45) {
   cam.updateWorldMatrix(true, false);
   const pos = new THREE.Vector3();
   cam.getWorldPosition(pos);
-  const dir = new THREE.Vector3();
-  cam.getWorldDirection(dir);
+  cam.getWorldQuaternion(_camWorldQuat);
+  const dir = _camLocalForward.clone().applyQuaternion(_camWorldQuat).normalize();
   const look = pos.clone().addScaledVector(dir, lookDist);
   return { pos, look };
 }
@@ -196,8 +211,8 @@ function SceneContent() {
     slots.forEach((s) => roomCenter.add(s));
     roomCenter.multiplyScalar(1 / Math.max(slots.length, 1));
 
-    const camShelf = getPerspectiveCamera(model, "Camera.001");
-    const camProj = getPerspectiveCamera(model, "Camera");
+    const camShelf = getPerspectiveCamera(model, GLTF_CAMERA_NODE_SHELF);
+    const camProj = getPerspectiveCamera(model, GLTF_CAMERA_NODE_DESK);
     const shelfFrame = camShelf ? cameraFraming(camShelf) : { pos: fb(4.54, 1.11, -2.5), look: slots[4]?.clone() ?? slotFallback.clone() };
     const projFrame = camProj ? cameraFraming(camProj) : { pos: fb(-2.61, 2.57, -3.74), look: erkanCenter.clone() };
 
@@ -793,7 +808,12 @@ function SceneContent() {
 export function Scene() {
   return (
     <Canvas
-      camera={{ position: [4.52, 1.1, -2.4], fov: 47, near: 0.01, far: 200 }}
+      camera={{
+        position: INITIAL_CAMERA_POSITION,
+        fov: INITIAL_CAMERA_FOV,
+        near: 0.01,
+        far: 200,
+      }}
       gl={{
         antialias: true,
         powerPreference: "high-performance",
