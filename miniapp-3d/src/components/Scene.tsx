@@ -21,8 +21,8 @@ const ORB_RADIUS = 0.1125;
 const GLTF_CAMERA_NODE_SHELF = "Camera.001";
 const GLTF_CAMERA_NODE_DESK = "Camera";
 
-/** UV плоскости Erkan из Blender — при необходимости подкрути (раньше для старой плоскости был π/2). */
-const ERKAN_TEX_ROTATION = 0;
+/** UV Erkan повёрнуты на 90° в GLB — компенсируем поворотом в шейдере. */
+const ERKAN_TEX_ROTATION = Math.PI / 2;
 
 const _camLocalForward = new THREE.Vector3(0, 0, -1);
 const _camWorldQuat = new THREE.Quaternion();
@@ -170,6 +170,7 @@ function SceneContent() {
   const lastArcRef = useRef<StoredArc | null>(null);
 
   const lastSelectedIndex = useRef(0);
+  const lastAppliedPlaybackUrl = useRef<string | null>(null);
 
   const marker = useMemo(() => {
     model.updateMatrixWorld(true);
@@ -304,6 +305,8 @@ function SceneContent() {
     [marker.erkanBaseScale, marker.erkanObj]
   );
 
+  const erkanShaderMatRef = useRef<THREE.ShaderMaterial | null>(null);
+
   const updateProjectionMaterial = useCallback(
     (texture: THREE.Texture | null) => {
       const placeholderMat = () =>
@@ -321,15 +324,16 @@ function SceneContent() {
       if (!obj) return;
       obj.visible = phase === "DESK";
       const showMedia = Boolean(texture) && phase === "DESK";
-      const vigTint = new THREE.Color(
-        deskOrbTint ? COLOR_HEX[deskOrbTint] : "#261a32"
-      );
+      erkanShaderMatRef.current = null;
       obj.traverse((o) => {
         const mesh = o as THREE.Mesh;
         if (!mesh.isMesh) return;
         const prev = mesh.material;
         if (prev instanceof THREE.ShaderMaterial) prev.dispose();
         if (showMedia && texture) {
+          const vigTint = new THREE.Color(
+            deskOrbTint ? COLOR_HEX[deskOrbTint] : "#261a32"
+          );
           const mat = createErkanProjectionMaterial(texture, {
             shaderContain: 0,
             texAspect: 1,
@@ -339,14 +343,22 @@ function SceneContent() {
             vignetteStrength: 0.72,
             uvRotation: ERKAN_TEX_ROTATION,
           });
+          erkanShaderMatRef.current = mat;
           mesh.material = mat;
         } else {
           mesh.material = placeholderMat();
         }
       });
     },
-    [deskOrbTint, marker.erkanObj, phase]
+    [marker.erkanObj, phase]
   );
+
+  useEffect(() => {
+    const mat = erkanShaderMatRef.current;
+    if (!mat || !deskOrbTint) return;
+    const c = new THREE.Color(COLOR_HEX[deskOrbTint]);
+    if (mat.uniforms.uVigTint) mat.uniforms.uVigTint.value.copy(c);
+  }, [deskOrbTint]);
 
   useEffect(() => {
     updateProjectionMaterial(null);
@@ -375,7 +387,7 @@ function SceneContent() {
 
   useEffect(() => {
     updateProjectionMaterial(playbackTexture);
-  }, [deskOrbTint, phase, playbackTexture, updateProjectionMaterial]);
+  }, [phase, playbackTexture, updateProjectionMaterial]);
 
   const disposePlaybackResources = useCallback(() => {
     const v = deskVideoElRef.current;
@@ -462,13 +474,16 @@ function SceneContent() {
   );
 
   const applyPlaybackToPlane = useCallback(
-    (pb: Playback | null) => {
+    (pb: Playback | null, force = false) => {
       if (!pb || pb.mediaType === "text" || !pb.url) {
+        lastAppliedPlaybackUrl.current = null;
         disposePlaybackResources();
         resetErkanScale();
         updateProjectionMaterial(null);
         return;
       }
+      if (!force && pb.url === lastAppliedPlaybackUrl.current) return;
+      lastAppliedPlaybackUrl.current = pb.url;
       disposePlaybackResources();
       resetErkanScale();
       updateProjectionMaterial(null);
@@ -476,48 +491,23 @@ function SceneContent() {
         const img = new Image();
         img.crossOrigin = "anonymous";
         img.onload = () => {
-          void (async () => {
-            let bitmap: ImageBitmap;
-            try {
-              bitmap = await createImageBitmap(img, { imageOrientation: "from-image" });
-            } catch {
-              try {
-                bitmap = await createImageBitmap(img);
-              } catch {
-                disposePlaybackResources();
-                updateProjectionMaterial(null);
-                return;
-              }
-            }
-            const w = bitmap.width || 1;
-            const h = bitmap.height || 1;
-            const MAX = 2048;
-            const scale = Math.min(1, MAX / Math.max(w, h));
-            const tw = Math.max(1, Math.round(w * scale));
-            const th = Math.max(1, Math.round(h * scale));
-            const canvas = document.createElement("canvas");
-            canvas.width = tw;
-            canvas.height = th;
-            const ctx = canvas.getContext("2d");
-            if (!ctx) {
-              bitmap.close();
-              disposePlaybackResources();
-              updateProjectionMaterial(null);
-              return;
-            }
-            ctx.drawImage(bitmap, 0, 0, w, h, 0, 0, tw, th);
-            bitmap.close();
-            const t = new THREE.CanvasTexture(canvas);
-            t.colorSpace = THREE.SRGBColorSpace;
-            t.flipY = false;
-            t.wrapS = THREE.ClampToEdgeWrapping;
-            t.wrapT = THREE.ClampToEdgeWrapping;
-            t.needsUpdate = true;
-            resizeErkanForMedia(tw, th);
-            playbackTexRef.current = t;
-            setPlaybackTexture(t);
-            updateProjectionMaterial(t);
-          })();
+          const w = img.naturalWidth || 1;
+          const h = img.naturalHeight || 1;
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+          ctx.drawImage(img, 0, 0, w, h);
+          const t = new THREE.CanvasTexture(canvas);
+          t.colorSpace = THREE.SRGBColorSpace;
+          t.wrapS = THREE.ClampToEdgeWrapping;
+          t.wrapT = THREE.ClampToEdgeWrapping;
+          t.needsUpdate = true;
+          resizeErkanForMedia(w, h);
+          playbackTexRef.current = t;
+          setPlaybackTexture(t);
+          updateProjectionMaterial(t);
         };
         img.onerror = () => {
           disposePlaybackResources();
@@ -539,7 +529,6 @@ function SceneContent() {
         video.autoplay = true;
         const texture = new THREE.VideoTexture(video);
         texture.colorSpace = THREE.SRGBColorSpace;
-        texture.flipY = false;
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
         video.addEventListener(

@@ -1,90 +1,50 @@
 /**
  * Shared preview texture cache.
  *
- * Как в Telegram-чате: `object-fit: contain` в квадрате (поля), без центр-кропа.
- * EXIF через `createImageBitmap(..., { imageOrientation: 'from-image' })`.
+ * Загружает картинку, центр-кропит в квадрат, возвращает Three.js текстуру.
  *
  * Usage:
  *   - Call `preloadAllPreviews(urls)` early (App bootstrap) to start fetching.
- *   - In components call `getPreviewTexture(url)` which returns the cached
- *     promise — resolves once the texture is ready.
+ *   - In components call `getPreviewTexture(url)` — returns cached promise.
  */
 import * as THREE from "three";
 
 const cache = new Map<string, Promise<THREE.Texture | null>>();
 
-/** Сторона квадратной текстуры превью (даунскейл с больших фото). */
-const PREVIEW_CANVAS_MAX = 640;
-
-function drawContainOnSquare(
-  ctx: CanvasRenderingContext2D,
-  bitmap: ImageBitmap,
-  side: number,
-  fillStyle: string
-): void {
-  const w0 = bitmap.width;
-  const h0 = bitmap.height;
-  const scale = Math.min(side / w0, side / h0);
-  const dw = Math.max(1, Math.round(w0 * scale));
-  const dh = Math.max(1, Math.round(h0 * scale));
-  const ox = (side - dw) / 2;
-  const oy = (side - dh) / 2;
-  ctx.fillStyle = fillStyle;
-  ctx.fillRect(0, 0, side, side);
-  ctx.drawImage(bitmap, 0, 0, w0, h0, ox, oy, dw, dh);
-}
-
-async function imageToOrientedBitmap(img: HTMLImageElement): Promise<ImageBitmap> {
-  try {
-    return await createImageBitmap(img, { imageOrientation: "from-image" });
-  } catch {
-    return createImageBitmap(img);
-  }
-}
+const PREVIEW_SIDE = 512;
 
 function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
-      void (async () => {
-        let bitmap: ImageBitmap | null = null;
-        try {
-          bitmap = await imageToOrientedBitmap(img);
-        } catch {
-          resolve(null);
-          return;
-        }
-        const w = bitmap.width;
-        const h = bitmap.height;
-        if (!w || !h) {
-          bitmap.close();
-          resolve(null);
-          return;
-        }
-        const side = PREVIEW_CANVAS_MAX;
-        const canvas = document.createElement("canvas");
-        canvas.width = side;
-        canvas.height = side;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          bitmap.close();
-          resolve(null);
-          return;
-        }
-        drawContainOnSquare(ctx, bitmap, side, "#0a0810");
-        bitmap.close();
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.flipY = false;
-        texture.wrapS = THREE.ClampToEdgeWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
-        texture.minFilter = THREE.LinearMipmapLinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-        texture.generateMipmaps = true;
-        texture.needsUpdate = true;
-        resolve(texture);
-      })();
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (!w || !h) {
+        resolve(null);
+        return;
+      }
+      const side = Math.min(w, h);
+      const sx = (w - side) / 2;
+      const sy = (h - side) / 2;
+      const canvas = document.createElement("canvas");
+      canvas.width = PREVIEW_SIDE;
+      canvas.height = PREVIEW_SIDE;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(null);
+        return;
+      }
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, PREVIEW_SIDE, PREVIEW_SIDE);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      texture.needsUpdate = true;
+      resolve(texture);
     };
     img.onerror = () => resolve(null);
     img.src = url;
@@ -105,9 +65,6 @@ export function preloadAllPreviews(urls: (string | null | undefined)[]): void {
   }
 }
 
-/**
- * Ждёт загрузки превью (или таймаут), плюс короткая пауза — чтобы шары не мигали пустыми.
- */
 export async function awaitPreviewLoads(
   urls: (string | null | undefined)[],
   opts?: { timeoutMs?: number; minWaitMs?: number }
