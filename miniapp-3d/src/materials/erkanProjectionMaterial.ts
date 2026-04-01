@@ -59,55 +59,53 @@ void main() {
   vec2 st = vUv;
   if (uMirrorX > 0.5) st.x = 1.0 - st.x;
 
-  // Remap UV so the memory texture sits in the center of the larger screen
-  vec2 texUv = (st - 0.5) / uTexScale + 0.5;
-  bool inTex = texUv.x > 0.001 && texUv.x < 0.999 &&
-               texUv.y > 0.001 && texUv.y < 0.999;
-  vec4 texel = inTex ? texture2D(map, texUv) : vec4(0.0);
+  // Always sample texture with clamping — never a hard rectangular boundary
+  vec2 texUv = clamp((st - 0.5) / uTexScale + 0.5, 0.0, 1.0);
+  vec4 texel = texture2D(map, texUv);
 
-  // Elliptical distance from center (full screen space)
+  // Elliptical distance from center (full screen UV space)
   vec2 q = (vUv - 0.5) * 2.0;
   float ellipse = length(q);
 
-  // Luminance for tinting
-  float lum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+  // Memory radial distance (in memory-space units: 1.0 = memory edge)
+  float memR = ellipse / uTexScale;
 
-  // Tint memory toward vignette color
+  // Smooth oval mask — pure ellipse, no rectangular edges ever
+  float memMask = 1.0 - smoothstep(0.65, 1.05, memR);
+
+  float lum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
   vec3 tinted = mix(texel.rgb, uVigTint * (0.5 + lum * 0.9), uColorMix);
 
-  // Memory oval boundary: memory inscribed inside the vignette ellipse
-  float memEdge = uTexScale;
-  float memFade = smoothstep(memEdge * 0.6, memEdge * 1.1, ellipse);
-
-  // Vignette color with animated noise texture
+  // Vignette color — rich and saturated
   float vigNoise = fbm2(vUv * 4.0 + vec2(uTime * 0.05, uTime * 0.03));
-  vec3 vigCol = uVigTint * (0.1 + 0.2 * vigNoise);
+  vec3 vigCol = uVigTint * (0.2 + 0.4 * vigNoise);
 
-  // Blend memory content → vignette color
-  vec3 rgb = mix(tinted, vigCol, memFade);
+  // Blend: inside oval = tinted memory, outside = vignette color
+  vec3 rgb = mix(vigCol, tinted, memMask);
 
-  // Glow bloom ring at memory boundary
-  float bloom = smoothstep(memEdge * 0.45, memEdge * 0.85, ellipse) *
-                (1.0 - smoothstep(memEdge * 0.85, memEdge * 1.5, ellipse));
-  rgb += uVigTint * bloom * uVigStr * 0.3;
+  // Thick bloom ring at memory boundary
+  float bloomR = smoothstep(0.5, 0.8, memR) * (1.0 - smoothstep(0.8, 1.5, memR));
+  rgb += uVigTint * bloomR * uVigStr * 0.5;
 
-  // Outer dissolution mask with noisy boundary
+  // Outer dissolution with noisy boundary
   float outerNoise = fbm2(vUv * 6.0 + vec2(uTime * 0.08, uTime * 0.05));
-  float outerEdge = 0.85 + outerNoise * 0.22;
-  float outerMask = 1.0 - smoothstep(outerEdge - 0.15, outerEdge + 0.08, ellipse);
+  float outerEdge = 0.80 + outerNoise * 0.22;
+  float outerMask = 1.0 - smoothstep(outerEdge - 0.2, outerEdge + 0.06, ellipse);
 
-  // Wispy fibers at the outer boundary
-  float fiberZone = smoothstep(0.55, 0.78, ellipse) *
-                    (1.0 - smoothstep(outerEdge - 0.05, outerEdge + 0.12, ellipse));
+  // Wispy fibers at outer boundary
+  float fiberZone = smoothstep(0.45, 0.7, ellipse) *
+                    (1.0 - smoothstep(outerEdge - 0.05, outerEdge + 0.1, ellipse));
   float fibers = fbm2(vUv * 18.0 + vec2(uTime * 0.1, -uTime * 0.07));
-  outerMask += fiberZone * fibers * 0.22;
+  outerMask += fiberZone * fibers * 0.25;
   outerMask = clamp(outerMask, 0.0, 1.0);
 
   // Subtle warm inner glow
-  float innerGlow = 1.0 - smoothstep(0.0, memEdge * 0.6, ellipse);
-  rgb += uVigTint * innerGlow * 0.06;
+  float innerGlow = 1.0 - smoothstep(0.0, uTexScale * 0.5, ellipse);
+  rgb += uVigTint * innerGlow * 0.08;
 
-  gl_FragColor = vec4(rgb, outerMask * uOpacity);
+  float finalAlpha = outerMask * uOpacity;
+  if (finalAlpha < 0.004) discard;
+  gl_FragColor = vec4(rgb, finalAlpha);
 }
 `;
 

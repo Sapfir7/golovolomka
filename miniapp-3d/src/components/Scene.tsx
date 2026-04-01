@@ -208,15 +208,23 @@ function SceneContent() {
     const conusNode = model.getObjectByName("Conus_light");
     if (conusNode) {
       coneOrigScaleRef.current = conusNode.scale.clone();
+      const meshes: THREE.Mesh[] = [];
       conusNode.traverse((ch) => {
         const mesh = ch as THREE.Mesh;
-        if (mesh.isMesh && mesh.geometry) {
-          coneMeshRef.current = mesh;
-          const mat = createConeBeamMaterial(mesh.geometry, { color: "#fff6e0", strength: 0 });
-          coneMatRef.current = mat;
-          mesh.material = mat;
-        }
+        if (mesh.isMesh && mesh.geometry) meshes.push(mesh);
       });
+      if (meshes.length > 0) {
+        const mesh = meshes[0];
+        coneMeshRef.current = mesh;
+        const mat = createConeBeamMaterial(mesh.geometry, { color: "#fff6e0", strength: 0 });
+        coneMatRef.current = mat;
+        mesh.material = mat;
+        for (const s of [0.75, 0.5, 0.25]) {
+          const inner = new THREE.Mesh(mesh.geometry, mat);
+          inner.scale.set(s, 1, s);
+          mesh.add(inner);
+        }
+      }
     }
   }, [model]);
 
@@ -562,7 +570,7 @@ function SceneContent() {
       if (tex) applyScreenTexture(tex, 0);
       const fadeIn = { v: 0 };
       gsap.to(fadeIn, {
-        v: 1, duration: 1.6, ease: "power2.in",
+        v: 1, duration: 2.0, ease: "power1.inOut",
         onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
       });
     }, 2.5);

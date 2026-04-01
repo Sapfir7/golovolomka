@@ -44,32 +44,32 @@ float fbm(vec3 p) {
   float v = 0.0, a = 0.5;
   for (int i = 0; i < 4; i++) {
     v += a * noise3(p);
-    p *= 2.1;
+    p *= 2.0;
     a *= 0.5;
   }
   return v;
 }
 
 void main() {
-  // Reveal from tip (vT=1) toward base (vT=0)
+  // Reveal from tip toward base with soft leading edge
   float revealEdge = 1.0 - uReveal;
-  float revealMask = smoothstep(revealEdge, revealEdge + 0.15, vT);
+  float revealMask = smoothstep(revealEdge, revealEdge + 0.25, vT);
 
-  // Multi-scale noise for hazy, scattered light
-  vec3 np = vLocalPos * 3.0 + vec3(uTime * 0.1, uTime * 0.15, uTime * 0.08);
+  // Low-frequency noise for soft, diffused, scattered look
+  vec3 np = vLocalPos * 1.5 + vec3(uTime * 0.08, uTime * 0.12, uTime * 0.06);
   float n = fbm(np);
-  float wisp = fbm(vLocalPos * 1.2 + vec3(0.0, uTime * 0.06, 0.0));
-  float detail = fbm(vLocalPos * 7.0 + vec3(uTime * 0.2, 0.0, uTime * 0.12));
 
-  // Soft fade at both ends of the cone
-  float axial = smoothstep(0.0, 0.06, vT) * smoothstep(0.0, 0.06, 1.0 - vT);
+  // Large wispy structures
+  float wisp = fbm(vLocalPos * 0.7 + vec3(0.0, uTime * 0.04, 0.0));
+
+  // Soft axial fade at both ends
+  float axial = smoothstep(0.0, 0.08, vT) * smoothstep(0.0, 0.08, 1.0 - vT);
 
   float alpha = uStrength * axial * revealMask;
-  alpha *= mix(0.2, 1.0, n);
-  alpha *= mix(0.4, 1.0, wisp);
-  alpha *= mix(0.7, 1.0, detail);
+  alpha *= mix(0.4, 1.0, n);
+  alpha *= mix(0.6, 1.0, wisp);
 
-  vec3 col = uColor * (0.75 + 0.35 * n);
+  vec3 col = uColor * (0.8 + 0.25 * n);
   gl_FragColor = vec4(col, alpha);
 }
 `;
