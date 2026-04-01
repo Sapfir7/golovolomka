@@ -8,6 +8,7 @@ import { MemoryOrb } from "./MemoryOrb";
 import type { Memory, Playback } from "../types";
 import { COLOR_HEX } from "../memoryPalette";
 import { createErkanProjectionMaterial } from "../materials/erkanProjectionMaterial";
+import { createSpotBeamMaterial } from "../materials/spotBeamMaterial";
 import { fetchPlayback } from "../api/client";
 
 const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik2.glb`;
@@ -66,6 +67,18 @@ function worldPos(model: THREE.Object3D, name: string): THREE.Vector3 | null {
 }
 
 const _desiredPos = new THREE.Vector3();
+const _m4 = new THREE.Matrix4();
+const _m4b = new THREE.Matrix4();
+const _quatBeam = new THREE.Quaternion();
+const _scaleBeam = new THREE.Vector3(1, 1, 1);
+
+/** Имена меша в GLB для ручного конуса луча (ориентация/размер — из Blender). */
+const BEAM_MESH_NAMES = new Set(["light_cone", "lightcone", "spot_beam", "spotbeam"]);
+
+function disposeMaterial(m: THREE.Material | THREE.Material[]) {
+  if (Array.isArray(m)) m.forEach((x) => x.dispose());
+  else m.dispose();
+}
 
 function SceneContent() {
   const { camera } = useThree();
@@ -168,6 +181,83 @@ function SceneContent() {
     });
     const hideNames = new Set(["trajectory_00", "trajectory_01", "trajectory_02", "trajectory_03", "trajectory_04"]);
     model.traverse((o) => { if (hideNames.has(o.name)) o.visible = false; });
+  }, [model]);
+
+  /* ── Видимый луч прожектора: меш `light_cone` в GLB или автоконус от первого SpotLight ── */
+  useEffect(() => {
+    const beamMats: THREE.ShaderMaterial[] = [];
+    let progMesh: THREE.Mesh | null = null;
+    let progGeom: THREE.BufferGeometry | null = null;
+
+    let usedGlbCone = false;
+    model.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const key = mesh.name.toLowerCase().replace(/\s+/g, "_");
+      if (!BEAM_MESH_NAMES.has(key)) return;
+      usedGlbCone = true;
+      const g = mesh.geometry;
+      g.computeBoundingBox();
+      const box = g.boundingBox;
+      if (!box) return;
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const h = Math.max(size.y, 0.02);
+      const r = Math.max(size.x, size.z) * 0.5;
+      disposeMaterial(mesh.material);
+      const mat = createSpotBeamMaterial({ coneHeight: h, bottomRadius: Math.max(r, 0.02), strength: 0.2 });
+      beamMats.push(mat);
+      mesh.material = mat;
+      mesh.visible = true;
+      mesh.renderOrder = 2;
+      mesh.frustumCulled = false;
+    });
+
+    if (!usedGlbCone) {
+      const spots: THREE.SpotLight[] = [];
+      model.traverse((o) => {
+        const s = o as THREE.SpotLight;
+        if (s.isSpotLight && spots.length === 0) spots.push(s);
+      });
+      const spot = spots[0];
+      if (spot) {
+        spot.updateWorldMatrix(true, true);
+        spot.target.updateWorldMatrix(true, true);
+        const lightPos = new THREE.Vector3();
+        spot.getWorldPosition(lightPos);
+        const targetPos = new THREE.Vector3();
+        spot.target.getWorldPosition(targetPos);
+        const dir = targetPos.clone().sub(lightPos);
+        const dist = Math.max(dir.length(), 0.01);
+        dir.multiplyScalar(1 / dist);
+        const height = Math.min(spot.distance || 10, 16);
+        const bottomRadius = Math.tan(spot.angle * 0.5) * height;
+        const geom = new THREE.ConeGeometry(bottomRadius, height, 48, 1, false);
+        geom.translate(0, -height / 2, 0);
+        const mat = createSpotBeamMaterial({ coneHeight: height, bottomRadius, strength: 0.2 });
+        beamMats.push(mat);
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.frustumCulled = false;
+        mesh.renderOrder = 2;
+        _quatBeam.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
+        model.updateWorldMatrix(true, false);
+        _m4.copy(model.matrixWorld).invert();
+        _m4b.compose(lightPos, _quatBeam, _scaleBeam);
+        _m4.multiply(_m4b);
+        _m4.decompose(mesh.position, mesh.quaternion, mesh.scale);
+        model.add(mesh);
+        progMesh = mesh;
+        progGeom = geom;
+      }
+    }
+
+    return () => {
+      for (const m of beamMats) m.dispose();
+      if (progMesh && progGeom) {
+        model.remove(progMesh);
+        progGeom.dispose();
+      }
+    };
   }, [model]);
 
   /* ── Initial camera ── */
