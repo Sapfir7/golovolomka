@@ -5,14 +5,14 @@ varying vec2 vUv;
 uniform float uUvRotation;
 
 void main() {
-  vec2 uv = uv;
+  vec2 uv2 = uv;
   if (abs(uUvRotation) > 0.0001) {
-    vec2 c = uv - 0.5;
+    vec2 c = uv2 - 0.5;
     float cs = cos(uUvRotation);
     float sn = sin(uUvRotation);
-    uv = vec2(c.x * cs - c.y * sn, c.x * sn + c.y * cs) + 0.5;
+    uv2 = vec2(c.x * cs - c.y * sn, c.x * sn + c.y * cs) + 0.5;
   }
-  vUv = uv;
+  vUv = uv2;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -20,33 +20,17 @@ void main() {
 const fragmentShader = `
 precision highp float;
 uniform sampler2D map;
-uniform float uShaderContain;
-uniform float uTexAspect;
-uniform float uPlaneAspect;
-uniform vec3 uBg;
+uniform float uMirrorX;
 uniform vec3 uVigTint;
 uniform float uVigStr;
 varying vec2 vUv;
 
-vec2 planeToTex(vec2 uv, float R, float A) {
-  vec2 st;
-  if (R >= A) {
-    st.x = (uv.x - 0.5) * (R / A) + 0.5;
-    st.y = uv.y;
-  } else {
-    st.x = uv.x;
-    st.y = (uv.y - 0.5) * (A / R) + 0.5;
-  }
-  return st;
-}
-
 void main() {
-  vec2 st = uShaderContain > 0.5
-    ? planeToTex(vUv, uTexAspect, uPlaneAspect)
-    : vUv;
-  bool outside = uShaderContain > 0.5 && (st.x < 0.0 || st.x > 1.0 || st.y < 0.0 || st.y > 1.0);
+  vec2 st = vUv;
+  if (uMirrorX > 0.5) st.x = 1.0 - st.x;
+
   vec4 t = texture2D(map, clamp(st, 0.001, 0.999));
-  vec3 rgb = outside ? uBg : t.rgb;
+  vec3 rgb = t.rgb;
 
   vec2 q = (vUv - 0.5) * 2.0;
   float vr = length(q);
@@ -60,13 +44,10 @@ void main() {
 `;
 
 export interface ErkanProjectionUniforms {
-  shaderContain: number;
-  texAspect: number;
-  planeAspect: number;
-  bg: THREE.Color;
   vignetteTint: THREE.Color;
   vignetteStrength: number;
   uvRotation: number;
+  mirrorX: boolean;
 }
 
 export function createErkanProjectionMaterial(
@@ -76,13 +57,10 @@ export function createErkanProjectionMaterial(
   return new THREE.ShaderMaterial({
     uniforms: {
       map: { value: map },
-      uShaderContain: { value: u.shaderContain },
-      uTexAspect: { value: u.texAspect },
-      uPlaneAspect: { value: u.planeAspect },
-      uBg: { value: u.bg.clone() },
       uVigTint: { value: u.vignetteTint.clone() },
       uVigStr: { value: u.vignetteStrength },
       uUvRotation: { value: u.uvRotation },
+      uMirrorX: { value: u.mirrorX ? 1.0 : 0.0 },
     },
     vertexShader,
     fragmentShader,
@@ -91,14 +69,4 @@ export function createErkanProjectionMaterial(
     side: THREE.DoubleSide,
     depthWrite: false,
   });
-}
-
-export function updateErkanVignetteUniforms(
-  mat: THREE.ShaderMaterial,
-  vignetteTint: THREE.Color,
-  strength = 0.72
-): void {
-  const u = mat.uniforms;
-  if (u.uVigTint) u.uVigTint.value.copy(vignetteTint);
-  if (u.uVigStr) u.uVigStr.value = strength;
 }

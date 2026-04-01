@@ -11,8 +11,7 @@ import { createErkanProjectionMaterial } from "../materials/erkanProjectionMater
 import { fetchPlayback } from "../api/client";
 import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
-/** Основная сцена: `golovolomka_v01042026.glb` + мягкий заполняющий свет (GLB тусклый). */
-const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}golovolomka_v01042026.glb`;
+const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik1.glb`;
 const ORB_RADIUS = 0.1125;
 
 /**
@@ -21,8 +20,10 @@ const ORB_RADIUS = 0.1125;
 const GLTF_CAMERA_NODE_SHELF = "Camera.001";
 const GLTF_CAMERA_NODE_DESK = "Camera";
 
-/** UV Erkan повёрнуты в GLB — компенсируем; пользователь просил ещё +180°. */
+/** UV Erkan повёрнуты в GLB — компенсируем. */
 const ERKAN_TEX_ROTATION = -Math.PI / 2;
+/** Зеркалит изображение по горизонтали на экране Erkan. */
+const ERKAN_MIRROR_X = true;
 
 const _camLocalForward = new THREE.Vector3(0, 0, -1);
 const _camWorldQuat = new THREE.Quaternion();
@@ -249,6 +250,11 @@ function SceneContent() {
     ]);
     model.traverse((o) => {
       if (hide.has(o.name)) o.visible = false;
+      const m = o as THREE.Mesh;
+      if (m.isMesh) {
+        m.castShadow = false;
+        m.receiveShadow = false;
+      }
     });
   }, [model]);
 
@@ -335,13 +341,10 @@ function SceneContent() {
             deskOrbTint ? COLOR_HEX[deskOrbTint] : "#261a32"
           );
           const mat = createErkanProjectionMaterial(texture, {
-            shaderContain: 0,
-            texAspect: 1,
-            planeAspect: 1,
-            bg: new THREE.Color(0x0a0612),
             vignetteTint: vigTint,
             vignetteStrength: 0.72,
             uvRotation: ERKAN_TEX_ROTATION,
+            mirrorX: ERKAN_MIRROR_X,
           });
           erkanShaderMatRef.current = mat;
           mesh.material = mat;
@@ -775,9 +778,9 @@ function SceneContent() {
   return (
     <>
       <CameraAspectSync />
-      <ambientLight intensity={0.38} />
-      <hemisphereLight color="#d4e2f5" groundColor="#4a433c" intensity={0.55} />
-      <directionalLight position={[8, 12, 6]} intensity={0.75} />
+      <ambientLight intensity={0.5} />
+      <hemisphereLight color="#e8dfd5" groundColor="#3d3630" intensity={0.6} />
+      <directionalLight position={[6, 10, 5]} intensity={0.9} castShadow={false} />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {
@@ -840,7 +843,7 @@ export function Scene() {
         antialias: true,
         powerPreference: "high-performance",
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1,
+        toneMappingExposure: 1.35,
       }}
       dpr={[1, 1.75]}
       style={{ width: "100%", height: "100%" }}
