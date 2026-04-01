@@ -8,6 +8,7 @@ import { MemoryOrb } from "./MemoryOrb";
 import type { Memory, Playback } from "../types";
 import { COLOR_HEX } from "../memoryPalette";
 import { createErkanProjectionMaterial } from "../materials/erkanProjectionMaterial";
+import { createConeBeamMaterial } from "../materials/coneBeamMaterial";
 import { fetchPlayback } from "../api/client";
 
 const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik2.glb`;
@@ -16,6 +17,9 @@ const NUM_SLOTS = 5;
 
 const SCREEN_UV_ROTATION = -Math.PI / 2;
 const SCREEN_MIRROR_X = true;
+
+const SPOT_BASE_INTENSITY = 12;
+const LIGHT_DIM_FACTOR = 0.35;
 
 const _fwd = new THREE.Vector3(0, 0, -1);
 const _quat = new THREE.Quaternion();
@@ -98,6 +102,13 @@ function SceneContent() {
   const cameraTarget = useRef({ pos: new THREE.Vector3(), look: new THREE.Vector3() });
   const lookCurrent = useRef(new THREE.Vector3());
 
+  const coneMeshRef = useRef<THREE.Mesh | null>(null);
+  const coneMatRef = useRef<THREE.ShaderMaterial | null>(null);
+  const beamStrengthRef = useRef(0);
+  const spotScreenRef = useRef<THREE.SpotLight | null>(null);
+  const lightDimRef = useRef(1); // 1 = normal, LIGHT_DIM_FACTOR = dimmed
+  const sceneLightsRef = useRef<{ light: THREE.Light; base: number }[]>([]);
+
   useEffect(() => {
     if (phase !== "DESK" || !deskMemoryId) { setDeskOrbTint(null); return; }
     const mem = memories.find((m) => m.id === deskMemoryId);
@@ -154,20 +165,60 @@ function SceneContent() {
   useEffect(() => {
     const POINT_BASE = 8;
     const POINT005 = 14;
+    const collected: { light: THREE.Light; base: number }[] = [];
+
     model.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; }
       const light = o as THREE.Light;
       if (!light.isLight) return;
       light.castShadow = false;
+
       if ((light as THREE.PointLight).isPointLight) {
-        light.intensity = (o.name === "Point.005" || o.name === "Point005") ? POINT005 : POINT_BASE;
+        const inten = (o.name === "Point.005" || o.name === "Point005") ? POINT005 : POINT_BASE;
+        light.intensity = inten;
+        collected.push({ light, base: inten });
       }
-      if ((light as THREE.SpotLight).isSpotLight) light.intensity = 12;
-      if ((light as THREE.DirectionalLight).isDirectionalLight) light.intensity = 0.6;
+      if ((light as THREE.SpotLight).isSpotLight) {
+        if (o.name === "Spot_screen" || o.name === "Spot.001") {
+          spotScreenRef.current = light as THREE.SpotLight;
+          light.intensity = SPOT_BASE_INTENSITY;
+          collected.push({ light, base: SPOT_BASE_INTENSITY });
+        } else {
+          light.intensity = 12;
+          collected.push({ light, base: 12 });
+        }
+      }
+      if ((light as THREE.DirectionalLight).isDirectionalLight) {
+        light.intensity = 0.6;
+        collected.push({ light, base: 0.6 });
+      }
     });
-    const hideNames = new Set(["trajectory_00", "trajectory_01", "trajectory_02", "trajectory_03", "trajectory_04"]);
+
+    sceneLightsRef.current = collected;
+
+    const hideNames = new Set([
+      "trajectory_00", "trajectory_01", "trajectory_02",
+      "trajectory_03", "trajectory_04", "Conus_light",
+    ]);
     model.traverse((o) => { if (hideNames.has(o.name)) o.visible = false; });
+
+    // Setup Conus_light mesh
+    const conusNode = model.getObjectByName("Conus_light");
+    if (conusNode) {
+      conusNode.traverse((ch) => {
+        const mesh = ch as THREE.Mesh;
+        if (mesh.isMesh && mesh.geometry) {
+          coneMeshRef.current = mesh;
+          const mat = createConeBeamMaterial(mesh.geometry, {
+            color: "#fff6e0",
+            strength: 0,
+          });
+          coneMatRef.current = mat;
+          mesh.material = mat;
+        }
+      });
+    }
   }, [model]);
 
   /* ── Initial camera ── */
@@ -206,6 +257,8 @@ function SceneContent() {
     [marker.screenBaseScale, marker.screenObj]
   );
 
+  const lastMediaSizeRef = useRef<{ w: number; h: number } | null>(null);
+
   const applyScreenTexture = useCallback(
     (texture: THREE.Texture, opacity: number) => {
       const obj = marker.screenObj;
@@ -221,6 +274,7 @@ function SceneContent() {
         const mat = createErkanProjectionMaterial(texture, {
           vignetteTint: vigTint, vignetteStrength: 0.72,
           uvRotation: SCREEN_UV_ROTATION, mirrorX: SCREEN_MIRROR_X,
+          colorMix: 0.3,
         });
         mat.uniforms.uOpacity = { value: opacity };
         screenShaderRef.current = mat;
@@ -239,7 +293,36 @@ function SceneContent() {
 
   useEffect(() => { hideScreen(); }, [hideScreen]);
 
-  /* ── Camera lerp ── */
+  /* ── Update cone visibility for Conus_light parent ── */
+  const showCone = useCallback(() => {
+    const conusNode = model.getObjectByName("Conus_light");
+    if (conusNode) conusNode.visible = true;
+  }, [model]);
+  const hideCone = useCallback(() => {
+    const conusNode = model.getObjectByName("Conus_light");
+    if (conusNode) conusNode.visible = false;
+    beamStrengthRef.current = 0;
+    if (coneMatRef.current) coneMatRef.current.uniforms.uStrength.value = 0;
+  }, [model]);
+
+  /* ── Spot_screen aiming at screen ── */
+  const aimSpotAtScreen = useCallback((mw: number, mh: number) => {
+    const spot = spotScreenRef.current;
+    if (!spot || !marker.screenCenter) return;
+    spot.target.position.copy(marker.screenCenter);
+    spot.target.updateMatrixWorld();
+    const ar = mw / mh;
+    const base = marker.screenBaseScale;
+    const maxH = base.x, maxW = base.z;
+    let areaW: number, areaH: number;
+    if (ar >= 1) { areaW = maxW; areaH = areaW / ar; } else { areaH = maxH; areaW = areaH * ar; }
+    const diag = Math.sqrt(areaW * areaW + areaH * areaH) * 0.5;
+    const dist = spot.position.distanceTo(marker.screenCenter);
+    spot.angle = Math.atan2(diag, dist) * 1.1;
+    spot.penumbra = 0.4;
+  }, [marker.screenBaseScale, marker.screenCenter]);
+
+  /* ── Camera lerp + per-frame uniforms ── */
   useFrame((_, delta) => {
     const alpha = 1 - Math.exp(-6 * delta);
     _desiredPos.copy(cameraTarget.current.pos);
@@ -247,12 +330,28 @@ function SceneContent() {
     lookCurrent.current.lerp(cameraTarget.current.look, alpha);
     camera.lookAt(lookCurrent.current);
 
+    // Screen opacity
     const mat = screenShaderRef.current;
     if (mat && mat.uniforms.uOpacity) mat.uniforms.uOpacity.value = screenOpacityRef.current;
+    if (mat && mat.uniforms.uTime) mat.uniforms.uTime.value += delta;
 
+    // Video texture update
     const vt = deskVideoTextureRef.current;
     if (vt && vt.image instanceof HTMLVideoElement && vt.image.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
       vt.needsUpdate = true;
+
+    // Beam uniform
+    const cm = coneMatRef.current;
+    if (cm) {
+      cm.uniforms.uStrength.value = beamStrengthRef.current;
+      cm.uniforms.uTime.value += delta;
+    }
+
+    // Light dimming
+    const dim = lightDimRef.current;
+    for (const entry of sceneLightsRef.current) {
+      entry.light.intensity = entry.base * dim;
+    }
   });
 
   /* ── Playback loading ── */
@@ -283,6 +382,8 @@ function SceneContent() {
           t.wrapS = THREE.ClampToEdgeWrapping; t.wrapT = THREE.ClampToEdgeWrapping;
           t.needsUpdate = true;
           resizeScreenForMedia(w, h);
+          aimSpotAtScreen(w, h);
+          lastMediaSizeRef.current = { w, h };
           playbackTexRef.current = t;
           setPlaybackTexture(t);
         };
@@ -297,8 +398,11 @@ function SceneContent() {
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.minFilter = THREE.LinearFilter; texture.magFilter = THREE.LinearFilter;
         video.addEventListener("loadedmetadata", () => {
-          if (video.videoWidth > 0 && video.videoHeight > 0)
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
             resizeScreenForMedia(video.videoWidth, video.videoHeight);
+            aimSpotAtScreen(video.videoWidth, video.videoHeight);
+            lastMediaSizeRef.current = { w: video.videoWidth, h: video.videoHeight };
+          }
           texture.needsUpdate = true;
         }, { once: true });
         void video.play().catch(() => void 0);
@@ -307,7 +411,7 @@ function SceneContent() {
         setPlaybackTexture(texture);
       }
     },
-    [disposePlaybackResources, resizeScreenForMedia]
+    [aimSpotAtScreen, disposePlaybackResources, resizeScreenForMedia]
   );
 
   useEffect(() => {
@@ -348,12 +452,13 @@ function SceneContent() {
   /* ── Go to shelf ── */
   const goShelf = useCallback(() => {
     setFlying(null); selectMemory(null); setPlayback(null);
-    disposePlaybackResources(); resetScreenScale(); hideScreen();
-    screenOpacityRef.current = 0; setPhase("SHELF");
+    disposePlaybackResources(); resetScreenScale(); hideScreen(); hideCone();
+    screenOpacityRef.current = 0; beamStrengthRef.current = 0; lightDimRef.current = 1;
+    setPhase("SHELF");
     const { pos, look } = marker.shelfFrame;
     cameraTarget.current.pos.copy(pos);
     cameraTarget.current.look.copy(look);
-  }, [disposePlaybackResources, resetScreenScale, hideScreen, marker.shelfFrame, selectMemory, setPhase, setPlayback]);
+  }, [disposePlaybackResources, resetScreenScale, hideScreen, hideCone, marker.shelfFrame, selectMemory, setPhase, setPlayback]);
 
   /* ── Orb click → zoom ── */
   const onOrbClick = useCallback(
@@ -382,7 +487,10 @@ function SceneContent() {
     setPhase("TRANSITION");
     setFlying({ memory, pos: slot.clone() });
     screenOpacityRef.current = 0;
+    beamStrengthRef.current = 0;
+    lightDimRef.current = 1;
     hideScreen();
+    hideCone();
 
     if (telegramId) {
       setLoadingPlayback(true);
@@ -402,41 +510,59 @@ function SceneContent() {
     const t01 = marker.traj01 ?? fMain.pos.clone().add(new THREE.Vector3(2, 0.5, 0));
     const t02 = marker.traj02 ?? t01.clone().add(new THREE.Vector3(0, -1.2, 0));
 
-    /* 1) Cam: shelf → Camera_01 → Camera_02, Orb: slot → traj00 → traj01 (1.8s) */
+    // 1) Cam: shelf → Camera_01 → Camera_02, Orb: slot → traj00 → traj01 (1.8s)
     tl.add(() => {
       animateCam([marker.shelfFrame, f01, f02], 1.8);
       animateOrb(slot, [t00, t01], 1.8);
     }, 0);
 
-    /* 2) Cam pauses; orb descends traj01 → traj02 (0.7s) */
+    // 2) Orb descends traj01 → traj02 (0.7s)
     tl.add(() => {
       animateOrb(t01, [t02], 0.7);
     }, 1.8);
 
-    /* 3) Cam: Camera_02 → Camera_03 → Camera_main (1.6s); memory fades in.
-       Orb stays at traj02 (flying state persists). */
-    const fadeIn = { v: 0 };
+    // 3) After ball drop, 0.4s pause: beam fades in + memory starts appearing + lights dim
+    const beamIn = { v: 0 };
+    const dimmer = { v: 1 };
     tl.add(() => {
+      showCone();
+
+      // Beam fade in (over the 0.4s pause + continues into camera movement)
+      gsap.to(beamIn, {
+        v: 0.45, duration: 0.6, ease: "power2.out",
+        onUpdate: () => { beamStrengthRef.current = beamIn.v; },
+      });
+
+      // Dim lights
+      gsap.to(dimmer, {
+        v: LIGHT_DIM_FACTOR, duration: 0.8, ease: "power2.inOut",
+        onUpdate: () => { lightDimRef.current = dimmer.v; },
+      });
+
+      // Memory starts appearing
       const tex = playbackTexRef.current;
-      if (tex) {
-        applyScreenTexture(tex, 0);
-      }
-      animateCam([f02, f03, fMain], 1.6);
+      if (tex) applyScreenTexture(tex, 0);
+      const fadeIn = { v: 0 };
       gsap.to(fadeIn, {
         v: 1, duration: 1.6, ease: "power2.in",
         onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
       });
     }, 2.5);
 
-    /* 4) Complete: hide flying orb, enter DESK */
+    // 4) Camera: Cam02 → Cam03 → CamMain (1.6s, starts 0.4s after pause begins)
+    tl.add(() => {
+      animateCam([f02, f03, fMain], 1.6);
+    }, 2.9);
+
+    // 5) Complete: hide flying orb, enter DESK
     tl.add(() => {
       screenOpacityRef.current = 1;
       setFlying(null);
       setDeskMemoryId(memory.id);
       setPhase("DESK");
-    }, 4.1);
+    }, 4.5);
   }, [
-    applyScreenTexture, hideScreen, initData, loadPlaybackTexture,
+    applyScreenTexture, hideScreen, hideCone, showCone, initData, loadPlaybackTexture,
     marker, memories, phase, selectedMemoryId, setLoadingPlayback,
     setPhase, setPlayback, slotForIndex, telegramId,
   ]);
@@ -459,19 +585,29 @@ function SceneContent() {
     const t03 = marker.traj03 ?? marker.camMainFrame.pos.clone().add(new THREE.Vector3(2, 0, 0));
     const t04 = marker.traj04 ?? slot.clone().add(new THREE.Vector3(0, 0.3, -2));
 
-    /* 1) Fade out memory (0.8s) */
+    // 1) Fade out memory + beam + restore lights (0.8s)
     const fadeOut = { v: 1 };
+    const beamOut = { v: beamStrengthRef.current };
+    const lightRestore = { v: lightDimRef.current };
     tl.add(() => {
       gsap.to(fadeOut, {
         v: 0, duration: 0.8, ease: "power2.out",
         onUpdate: () => { screenOpacityRef.current = fadeOut.v; },
       });
+      gsap.to(beamOut, {
+        v: 0, duration: 0.8, ease: "power2.out",
+        onUpdate: () => { beamStrengthRef.current = beamOut.v; },
+      });
+      gsap.to(lightRestore, {
+        v: 1, duration: 1.0, ease: "power2.inOut",
+        onUpdate: () => { lightDimRef.current = lightRestore.v; },
+      });
     }, 0);
 
-    /* 2) Once faded: hide screen, orb at traj_03, cam+orb fly home (1.8s) */
+    // 2) Once faded: hide screen + cone, orb at traj_03, cam+orb fly home (1.8s)
     tl.add(() => {
       setDeskMemoryId(null);
-      disposePlaybackResources(); resetScreenScale(); hideScreen();
+      disposePlaybackResources(); resetScreenScale(); hideScreen(); hideCone();
       screenOpacityRef.current = 0;
       setFlying({ memory, pos: t03.clone() });
       animateCam([marker.camMainFrame, f04, marker.shelfFrame], 1.8);
@@ -483,7 +619,7 @@ function SceneContent() {
       setPhase("SHELF");
     }, 2.7);
   }, [
-    deskMemoryId, disposePlaybackResources, hideScreen, marker, memories, phase,
+    deskMemoryId, disposePlaybackResources, hideScreen, hideCone, marker, memories, phase,
     resetScreenScale, selectMemory, setPhase, setPlayback, slotForIndex,
   ]);
 
