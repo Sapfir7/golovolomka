@@ -8,8 +8,6 @@ import { MemoryOrb } from "./MemoryOrb";
 import type { Memory, Playback } from "../types";
 import { COLOR_HEX } from "../memoryPalette";
 import { createErkanProjectionMaterial } from "../materials/erkanProjectionMaterial";
-import { createConeBeamMaterial } from "../materials/spotBeamMaterial";
-import { BEAM_STRENGTH, SPOT_MUL } from "../scene/beamTimings";
 import { fetchPlayback } from "../api/client";
 
 const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik2.glb`;
@@ -69,16 +67,6 @@ function worldPos(model: THREE.Object3D, name: string): THREE.Vector3 | null {
 
 const _desiredPos = new THREE.Vector3();
 
-/** Конус без текстур в GLB — подменяем материал на «луч». Имена без учёта регистра. */
-const BEAM_MESH_NAMES = new Set(["light_cone", "lightcone", "spot_beam", "spotbeam"]);
-
-const SPOT_BASE_INTENSITY = 12;
-
-function disposeMaterial(m: THREE.Material | THREE.Material[]) {
-  if (Array.isArray(m)) m.forEach((x) => x.dispose());
-  else m.dispose();
-}
-
 function SceneContent() {
   const { camera } = useThree();
   const { scene } = useGLTF(SCENE_MODEL_URL);
@@ -107,13 +95,6 @@ function SceneContent() {
   const lastAppliedPlaybackUrl = useRef<string | null>(null);
   const timelineRef = useRef<gsap.core.Timeline | null>(null);
 
-  const beamMatsRef = useRef<THREE.ShaderMaterial[]>([]);
-  const beamStrengthRef = useRef(BEAM_STRENGTH.shelf);
-  const spotMulRef = useRef(SPOT_MUL.shelf);
-  const spotForBeamRef = useRef<THREE.SpotLight | null>(null);
-  const beamStrengthTweenRef = useRef<gsap.core.Tween | null>(null);
-  const spotMulTweenRef = useRef<gsap.core.Tween | null>(null);
-
   const cameraTarget = useRef({ pos: new THREE.Vector3(), look: new THREE.Vector3() });
   const lookCurrent = useRef(new THREE.Vector3());
 
@@ -122,32 +103,6 @@ function SceneContent() {
     const mem = memories.find((m) => m.id === deskMemoryId);
     setDeskOrbTint(mem?.color ?? null);
   }, [phase, deskMemoryId, memories, setDeskOrbTint]);
-
-  const tweenBeamStrength = useCallback((to: number, duration: number) => {
-    beamStrengthTweenRef.current?.kill();
-    const o = { v: beamStrengthRef.current };
-    beamStrengthTweenRef.current = gsap.to(o, {
-      v: to,
-      duration,
-      ease: "sine.inOut",
-      onUpdate: () => {
-        beamStrengthRef.current = o.v;
-      },
-    });
-  }, []);
-
-  const tweenSpotMul = useCallback((to: number, duration: number) => {
-    spotMulTweenRef.current?.kill();
-    const o = { v: spotMulRef.current };
-    spotMulTweenRef.current = gsap.to(o, {
-      v: to,
-      duration,
-      ease: "sine.inOut",
-      onUpdate: () => {
-        spotMulRef.current = o.v;
-      },
-    });
-  }, []);
 
   const marker = useMemo(() => {
     model.updateMatrixWorld(true);
@@ -208,47 +163,11 @@ function SceneContent() {
       if ((light as THREE.PointLight).isPointLight) {
         light.intensity = (o.name === "Point.005" || o.name === "Point005") ? POINT005 : POINT_BASE;
       }
-      if ((light as THREE.SpotLight).isSpotLight) {
-        light.intensity = SPOT_BASE_INTENSITY;
-      }
+      if ((light as THREE.SpotLight).isSpotLight) light.intensity = 12;
       if ((light as THREE.DirectionalLight).isDirectionalLight) light.intensity = 0.6;
     });
-    const spots: THREE.SpotLight[] = [];
-    model.traverse((o) => {
-      const s = o as THREE.SpotLight;
-      if (s.isSpotLight && spots.length === 0) spots.push(s);
-    });
-    spotForBeamRef.current = spots[0] ?? null;
-
     const hideNames = new Set(["trajectory_00", "trajectory_01", "trajectory_02", "trajectory_03", "trajectory_04"]);
     model.traverse((o) => { if (hideNames.has(o.name)) o.visible = false; });
-  }, [model]);
-
-  /* ── Видимый луч: конус из GLB (имя light_cone и т.п.), без текстур ── */
-  useEffect(() => {
-    const disposedMats: THREE.ShaderMaterial[] = [];
-    beamMatsRef.current = [];
-    model.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      const key = mesh.name.toLowerCase().replace(/\s+/g, "_");
-      if (!BEAM_MESH_NAMES.has(key)) return;
-      disposeMaterial(mesh.material);
-      const mat = createConeBeamMaterial(mesh.geometry, {
-        strength: beamStrengthRef.current,
-        color: "#fff6e0",
-      });
-      disposedMats.push(mat);
-      beamMatsRef.current.push(mat);
-      mesh.material = mat;
-      mesh.visible = true;
-      mesh.renderOrder = 2;
-      mesh.frustumCulled = false;
-    });
-    return () => {
-      for (const m of disposedMats) m.dispose();
-      beamMatsRef.current = [];
-    };
   }, [model]);
 
   /* ── Initial camera ── */
@@ -334,13 +253,6 @@ function SceneContent() {
     const vt = deskVideoTextureRef.current;
     if (vt && vt.image instanceof HTMLVideoElement && vt.image.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
       vt.needsUpdate = true;
-
-    const s = beamStrengthRef.current;
-    for (const bm of beamMatsRef.current) {
-      if (bm.uniforms.uStrength) bm.uniforms.uStrength.value = s;
-    }
-    const sp = spotForBeamRef.current;
-    if (sp) sp.intensity = SPOT_BASE_INTENSITY * spotMulRef.current;
   });
 
   /* ── Playback loading ── */
@@ -437,17 +349,11 @@ function SceneContent() {
   const goShelf = useCallback(() => {
     setFlying(null); selectMemory(null); setPlayback(null);
     disposePlaybackResources(); resetScreenScale(); hideScreen();
-    screenOpacityRef.current = 0;
-    tweenBeamStrength(BEAM_STRENGTH.shelf, 0.55);
-    tweenSpotMul(SPOT_MUL.shelf, 0.55);
-    setPhase("SHELF");
+    screenOpacityRef.current = 0; setPhase("SHELF");
     const { pos, look } = marker.shelfFrame;
     cameraTarget.current.pos.copy(pos);
     cameraTarget.current.look.copy(look);
-  }, [
-    disposePlaybackResources, resetScreenScale, hideScreen, marker.shelfFrame,
-    selectMemory, setPhase, setPlayback, tweenBeamStrength, tweenSpotMul,
-  ]);
+  }, [disposePlaybackResources, resetScreenScale, hideScreen, marker.shelfFrame, selectMemory, setPhase, setPlayback]);
 
   /* ── Orb click → zoom ── */
   const onOrbClick = useCallback(
@@ -456,14 +362,12 @@ function SceneContent() {
       const slot = slotForIndex(idx);
       selectMemory(memory.id);
       setPhase("ZOOMED");
-      tweenBeamStrength(BEAM_STRENGTH.zoomed, 0.45);
-      tweenSpotMul(SPOT_MUL.zoomed, 0.45);
       const { pos: sp } = marker.shelfFrame;
       const zoomPos = sp.clone().lerp(slot, 0.6);
       cameraTarget.current.pos.copy(zoomPos);
       cameraTarget.current.look.copy(slot);
     },
-    [marker.shelfFrame, phase, selectMemory, setPhase, slotForIndex, tweenBeamStrength, tweenSpotMul]
+    [marker.shelfFrame, phase, selectMemory, setPhase, slotForIndex]
   );
 
   /* ══════════════════════════════════════════════════
@@ -500,16 +404,12 @@ function SceneContent() {
 
     /* 1) Cam: shelf → Camera_01 → Camera_02, Orb: slot → traj00 → traj01 (1.8s) */
     tl.add(() => {
-      tweenBeamStrength(BEAM_STRENGTH.flightToCam02, 1.8);
-      tweenSpotMul(SPOT_MUL.flightToCam02, 1.8);
       animateCam([marker.shelfFrame, f01, f02], 1.8);
       animateOrb(slot, [t00, t01], 1.8);
     }, 0);
 
     /* 2) Cam pauses; orb descends traj01 → traj02 (0.7s) */
     tl.add(() => {
-      tweenBeamStrength(BEAM_STRENGTH.atTraj02, 0.7);
-      tweenSpotMul(SPOT_MUL.atTraj02, 0.7);
       animateOrb(t01, [t02], 0.7);
     }, 1.8);
 
@@ -517,8 +417,6 @@ function SceneContent() {
        Orb stays at traj02 (flying state persists). */
     const fadeIn = { v: 0 };
     tl.add(() => {
-      tweenBeamStrength(BEAM_STRENGTH.approachScreen, 1.6);
-      tweenSpotMul(SPOT_MUL.approachScreen, 1.6);
       const tex = playbackTexRef.current;
       if (tex) {
         applyScreenTexture(tex, 0);
@@ -533,8 +431,6 @@ function SceneContent() {
     /* 4) Complete: hide flying orb, enter DESK */
     tl.add(() => {
       screenOpacityRef.current = 1;
-      tweenBeamStrength(BEAM_STRENGTH.desk, 0.5);
-      tweenSpotMul(SPOT_MUL.desk, 0.5);
       setFlying(null);
       setDeskMemoryId(memory.id);
       setPhase("DESK");
@@ -543,7 +439,6 @@ function SceneContent() {
     applyScreenTexture, hideScreen, initData, loadPlaybackTexture,
     marker, memories, phase, selectedMemoryId, setLoadingPlayback,
     setPhase, setPlayback, slotForIndex, telegramId,
-    tweenBeamStrength, tweenSpotMul,
   ]);
 
   /* ══════════════════════════════════════════════════
@@ -567,8 +462,6 @@ function SceneContent() {
     /* 1) Fade out memory (0.8s) */
     const fadeOut = { v: 1 };
     tl.add(() => {
-      tweenBeamStrength(BEAM_STRENGTH.backFade, 0.8);
-      tweenSpotMul(SPOT_MUL.backFade, 0.8);
       gsap.to(fadeOut, {
         v: 0, duration: 0.8, ease: "power2.out",
         onUpdate: () => { screenOpacityRef.current = fadeOut.v; },
@@ -577,8 +470,6 @@ function SceneContent() {
 
     /* 2) Once faded: hide screen, orb at traj_03, cam+orb fly home (1.8s) */
     tl.add(() => {
-      tweenBeamStrength(BEAM_STRENGTH.flightHome, 1.8);
-      tweenSpotMul(SPOT_MUL.flightHome, 1.8);
       setDeskMemoryId(null);
       disposePlaybackResources(); resetScreenScale(); hideScreen();
       screenOpacityRef.current = 0;
@@ -588,15 +479,12 @@ function SceneContent() {
     }, 0.85);
 
     tl.add(() => {
-      tweenBeamStrength(BEAM_STRENGTH.shelf, 0.5);
-      tweenSpotMul(SPOT_MUL.shelf, 0.5);
       setFlying(null); selectMemory(null); setPlayback(null);
       setPhase("SHELF");
     }, 2.7);
   }, [
     deskMemoryId, disposePlaybackResources, hideScreen, marker, memories, phase,
     resetScreenScale, selectMemory, setPhase, setPlayback, slotForIndex,
-    tweenBeamStrength, tweenSpotMul,
   ]);
 
   useEffect(() => {
