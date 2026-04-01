@@ -10,8 +10,8 @@ import type { Memory, Playback } from "../types";
 import { fetchPlayback } from "../api/client";
 import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
-/** Сцена `temp7/temp7.gltf` + `temp7.bin` (камеры, свет, Erkan, слоты, temp1–temp3). Исходник Blender: `blender/temp7.blend`. */
-const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp7/temp7.gltf`;
+/** Основная сцена: `temp2.glb` (геометрия, текстуры, свет из экспорта — без донастройки в коде). */
+const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp2.glb`;
 const ORB_RADIUS = 0.1125;
 
 /** UV плоскости Erkan из Blender — при необходимости подкрути (раньше для старой плоскости был π/2). */

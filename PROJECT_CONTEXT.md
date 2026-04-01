@@ -14,7 +14,7 @@
 - Deploy: Render Web Service
 
 ## 3D scene and assets
-- Blender: **`blender/temp7.blend`**. Экспорт glTF: **`miniapp-3d/public/temp7/temp7.gltf`** + **`temp7.bin`** (текстуры в бинарнике). Расширения: **`KHR_lights_punctual`** и др. Статика после `npm run build` в **`miniapp-3d-dist/temp7/`**; URL сцены **`/miniapp-3d/temp7/temp7.gltf`**.
+- Сцена: **`miniapp-3d/public/temp2.glb`** (glTF Binary, текстуры и **`KHR_lights_punctual`** внутри). После сборки — **`miniapp-3d-dist/temp2.glb`**, URL **`/miniapp-3d/temp2.glb`**. Опционально исходник Blender можно держать отдельно (например `blender/`).
 - Имена объектов в сцене (как в Blender): камеры **`Camera.001`** (шкаф), **`Camera`** (проектор); экран **`Erkan`**; слоты шаров **`Slot00`…`Slot09`** (без подчёркивания; отсутствующие слоты — fallback-позиция); траектория летающего шара **`Temp1` → `Temp2` → `Temp3`** (маркеры скрыты в рендере). Точка «посадки» у проектора: **`pos_final`** / **`Pos_final`**, иначе **центр `Erkan`**. Опционально **`Cam_temp`** для средней точки дуги камеры к проектору.
 - Объект **`Cam_temp`** в GLB: проходная точка для камеры на участке **полка → проектор** (квадратичная Безье по позиции; объект в рендере скрыт, используется только world position).
 - Дополнительные точки траектории через код: `miniapp-3d/src/cameraPath.ts` (`SHELF_TO_DESK_WAYPOINTS`) — Catmull–Rom, если массив не пуст.
