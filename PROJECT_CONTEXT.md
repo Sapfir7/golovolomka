@@ -14,14 +14,13 @@
 - Deploy: Render Web Service
 
 ## 3D scene and assets
-- **Файл сцены:** `miniapp-3d/public/temp2.glb` (glTF Binary: геометрия, встроенные текстуры, расширения вроде **`KHR_lights_punctual`**, `KHR_materials_*`). После `npm run build` копируется в `miniapp-3d-dist/temp2.glb`, URL **`/miniapp-3d/temp2.glb`**. Загрузка: `useGLTF(SCENE_MODEL_URL)` в `Scene.tsx`, затем `scene.clone(true)` без подмены материалов из кода.
+- **Файл сцены:** `miniapp-3d/public/golovolomka_v01042026.glb` → после сборки `miniapp-3d-dist/golovolomka_v01042026.glb`, URL **`/miniapp-3d/golovolomka_v01042026.glb`**. `useGLTF` + `scene.clone(true)`; свет и материалы только из GLB.
 - **Имена объектов (Blender → GLB):** слоты **`Slot00`…`Slot09`**; экран **`Erkan`**; камеры-ноды **`Camera.001`** (режим полки) и **`Camera`** (режим стола/проектора) — задаются константами **`GLTF_CAMERA_NODE_SHELF`** / **`GLTF_CAMERA_NODE_DESK`**; при перепутанных ролях в Blender поменять строки местами. Точка «посадки» шара у проектора: **`pos_final`** / **`Pos_final`**, иначе центр **`Erkan`**. Траектория шара: **`Temp1` → `Temp2` → `Temp3`** (в рендере скрыты). Средняя точка дуги камеры полка→стол: **`Cam_temp`** / **`cam_temp`** (тоже скрыт, только позиция).
-- **Камера в коде:** позиция/«куда смотреть» для кадров берутся из GLB: `cameraFraming` — мировая позиция камеры + направление как **локальный −Z**, развёрнутый кватернионом ноды (`getWorldQuaternion` × `(0,0,-1)`). Стартовые `Canvas` **`INITIAL_CAMERA_POSITION`** / **`INITIAL_CAMERA_FOV`** синхронизированы с **`Camera.001`** в текущем temp2 (при смене GLB при необходимости обновить). FOV/near/far активной камеры подтягиваются с камеры полки (`camShelf`).
-- **Свет в GLB (пример temp2):** в файле **`Spot.001`** (spot) и **`Sun`** (directional); в экспорте у spot часто **`intensity: 0`**, у Sun очень мало (~0.04 lx). Функция **`applyTemp2LightTuning`**: если spot **`intensity < 0.02`** → выставить **38 cd**; если directional **`intensity < 0.12 lx`** → **1.35 lx** (константы `TUNED_*`, пороги `SPOT_*` / `DIRECTIONAL_*`). Иначе значения из GLB не трогаются. Отдельных ambient/hemisphere в сцене нет.
-- **Постобработка:** **`toneMappingExposure: 0.92`**, **`ACESFilmicToneMapping`** на `Canvas`. **`DeskVignette`** — только в режиме стола (UI), не часть GLB.
+- **Камера в коде:** позиция и точка взгляда из GLB через **`cameraFraming`** (мир. позиция + локальный **−Z** через `getWorldQuaternion`). Стартовый `Canvas` — нейтральный запасной кадр до применения **`Camera.001`**; FOV/near/far с **`camShelf`** в `useEffect`.
+- **Свет:** только **`KHR_lights_punctual`** из GLB; отдельных ambient/hemisphere в коде нет. **`toneMappingExposure: 1`**, **`ACESFilmicToneMapping`**. **`DeskVignette`** — только режим стола.
+- **Камера при ресайзе:** компонент **`CameraAspectSync`** выставляет `PerspectiveCamera.aspect = gl.domElement.width / height` при изменении `size` и каждый кадр (Telegram / растягивание окна).
 - Дополнительные точки камеры через код: `miniapp-3d/src/cameraPath.ts` (`SHELF_TO_DESK_WAYPOINTS`) — Catmull–Rom, если массив не пуст.
-- Превью на шарах: `previewTextureCache.ts` (canvas + EXIF), перед `SHELF` — `awaitPreviewLoads`.
-- Ранее использовались `gol_v3_2.glb` и отдельный экспорт `temp7.gltf`+`temp7.bin` — **не актуально**; в `blender/` может лежать старый `.blend` (не обязателен для деплоя).
+- Превью: `previewTextureCache.ts` (canvas + EXIF), перед `SHELF` — `awaitPreviewLoads`; **`flipY: false`** на превью и на текстурах фото/видео **Erkan** (без переворота на сфере/экране).
 
 ## Key files
 - `server.js` - bot handlers, API routes, mini app static routes (`/miniapp-3d` → `miniapp-3d-dist`), startup logic.

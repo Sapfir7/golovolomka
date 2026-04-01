@@ -38,6 +38,8 @@ function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
       ctx.drawImage(img, sx, sy, side, side, 0, 0, side, side);
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
+      /** WebGL UV на сфере: иначе превью часто вверх ногами при flipY по умолчанию. */
+      texture.flipY = false;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
       texture.minFilter = THREE.LinearMipmapLinearFilter;

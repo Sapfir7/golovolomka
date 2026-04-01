@@ -1,6 +1,6 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
-import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import gsap from "gsap";
 import { useStore } from "../store/useStore";
@@ -10,32 +10,15 @@ import type { Memory, Playback } from "../types";
 import { fetchPlayback } from "../api/client";
 import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
-/** Основная сцена: `temp2.glb` (геометрия, текстуры, свет из экспорта). */
-const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp2.glb`;
+/** Основная сцена: `golovolomka_v01042026.glb` — свет и материалы только из файла. */
+const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}golovolomka_v01042026.glb`;
 const ORB_RADIUS = 0.1125;
 
 /**
- * Подстройка света: в экспорте temp2 spot был 0 cd, Sun ~0.044 lx — в комнате почти темно.
- * Целевые значения (Three.js, физ. свет): заметно, но без сильного пересвета при ACES + exposure 0.92.
- *
- * - Spot (если intensity меньше 0.02): **38 cd** (канделы)
- * - Directional (если intensity меньше 0.12 lx): **1.35 lx** (люксы)
- */
-const TUNED_SPOT_INTENSITY_CD = 38;
-const TUNED_DIRECTIONAL_INTENSITY_LX = 1.35;
-const SPOT_INTENSITY_REPLACE_BELOW = 0.02;
-const DIRECTIONAL_INTENSITY_REPLACE_BELOW = 0.12;
-
-/**
- * Какие **ноды камер** из GLB для какого режима (имена объектов в Blender / Outliner).
- * Если «шкаф» и «стол» перепутаны — поменяй значения местами.
+ * Ноды камер GLB: полка / стол (при перепутанных ролях в Blender — поменять местами).
  */
 const GLTF_CAMERA_NODE_SHELF = "Camera.001";
 const GLTF_CAMERA_NODE_DESK = "Camera";
-
-/** Стартовые параметры R3F-камеры до первого кадра — совпадают с `Camera.001` в temp2.glb (при смене сцены подправь). */
-const INITIAL_CAMERA_POSITION: [number, number, number] = [3.853442668914795, 1.0901598930358887, -3.296273946762085];
-const INITIAL_CAMERA_FOV = THREE.MathUtils.radToDeg(0.6911112070083618);
 
 /** UV плоскости Erkan из Blender — при необходимости подкрути (раньше для старой плоскости был π/2). */
 const ERKAN_TEX_ROTATION = 0;
@@ -43,18 +26,28 @@ const ERKAN_TEX_ROTATION = 0;
 const _camLocalForward = new THREE.Vector3(0, 0, -1);
 const _camWorldQuat = new THREE.Quaternion();
 
-function applyTemp2LightTuning(root: THREE.Object3D) {
-  root.traverse((obj) => {
-    const light = obj as THREE.Light;
-    if (!light.isLight) return;
-    if ((light as THREE.SpotLight).isSpotLight) {
-      if (light.intensity < SPOT_INTENSITY_REPLACE_BELOW) light.intensity = TUNED_SPOT_INTENSITY_CD;
-      return;
+/** Aspect = размер буфера WebGL (`domElement.width/height`), синхронно с ресайзом / DPR (в т.ч. Telegram). */
+function CameraAspectSync() {
+  const { camera, gl, size } = useThree();
+  const sync = useCallback(() => {
+    if (!(camera instanceof THREE.PerspectiveCamera)) return;
+    const el = gl.domElement;
+    const w = el.width;
+    const h = el.height;
+    if (w <= 0 || h <= 0) return;
+    const a = w / h;
+    if (Math.abs(camera.aspect - a) > 1e-5) {
+      camera.aspect = a;
+      camera.updateProjectionMatrix();
     }
-    if ((light as THREE.DirectionalLight).isDirectionalLight) {
-      if (light.intensity < DIRECTIONAL_INTENSITY_REPLACE_BELOW) light.intensity = TUNED_DIRECTIONAL_INTENSITY_LX;
-    }
+  }, [camera, gl]);
+  useEffect(() => {
+    sync();
+  }, [sync, size.width, size.height]);
+  useFrame(() => {
+    sync();
   });
+  return null;
 }
 
 function getPerspectiveCamera(root: THREE.Object3D, name: string): THREE.PerspectiveCamera | null {
@@ -142,11 +135,7 @@ const _desiredPos = new THREE.Vector3();
 function SceneContent() {
   const { camera } = useThree();
   const { scene } = useGLTF(SCENE_MODEL_URL);
-  const model = useMemo(() => {
-    const m = scene.clone(true);
-    applyTemp2LightTuning(m);
-    return m;
-  }, [scene]);
+  const model = useMemo(() => scene.clone(true), [scene]);
 
   const phase = useStore((s) => s.phase);
   const setPhase = useStore((s) => s.setPhase);
@@ -480,6 +469,7 @@ function SceneContent() {
           ctx.drawImage(img, 0, 0, w, h);
           const t = new THREE.CanvasTexture(canvas);
           t.colorSpace = THREE.SRGBColorSpace;
+          t.flipY = false;
           prepareTexForPlane(t);
           resizeErkanForMedia(w, h);
           playbackTexRef.current = t;
@@ -506,6 +496,7 @@ function SceneContent() {
         video.autoplay = true;
         const texture = new THREE.VideoTexture(video);
         texture.colorSpace = THREE.SRGBColorSpace;
+        texture.flipY = false;
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
         prepareTexForPlane(texture);
@@ -750,6 +741,7 @@ function SceneContent() {
 
   return (
     <>
+      <CameraAspectSync />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {
@@ -808,17 +800,12 @@ function SceneContent() {
 export function Scene() {
   return (
     <Canvas
-      camera={{
-        position: INITIAL_CAMERA_POSITION,
-        fov: INITIAL_CAMERA_FOV,
-        near: 0.01,
-        far: 200,
-      }}
+      camera={{ position: [0, 2, 8], fov: 45, near: 0.01, far: 500 }}
       gl={{
         antialias: true,
         powerPreference: "high-performance",
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 0.92,
+        toneMappingExposure: 1,
       }}
       dpr={[1, 1.75]}
       style={{ width: "100%", height: "100%" }}
