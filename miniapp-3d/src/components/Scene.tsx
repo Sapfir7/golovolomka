@@ -21,8 +21,8 @@ const ORB_RADIUS = 0.1125;
 const GLTF_CAMERA_NODE_SHELF = "Camera.001";
 const GLTF_CAMERA_NODE_DESK = "Camera";
 
-/** UV Erkan повёрнуты на 90° в GLB — компенсируем поворотом в шейдере. */
-const ERKAN_TEX_ROTATION = Math.PI / 2;
+/** UV Erkan повёрнуты в GLB — компенсируем; пользователь просил ещё +180°. */
+const ERKAN_TEX_ROTATION = -Math.PI / 2;
 
 const _camLocalForward = new THREE.Vector3(0, 0, -1);
 const _camWorldQuat = new THREE.Quaternion();
