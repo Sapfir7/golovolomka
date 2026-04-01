@@ -72,8 +72,8 @@ function getPerspectiveCamera(root: THREE.Object3D, name: string): THREE.Perspec
   return out;
 }
 
-/** Точка взгляда из **трансформа камеры в GLB** (локальный −Z → мир), без выдуманных углов. */
-function cameraFraming(cam: THREE.PerspectiveCamera, lookDist = 45) {
+/** Точка взгляда из **трансформа камеры в GLB** (локальный −Z → мир). */
+function cameraFraming(cam: THREE.PerspectiveCamera, lookDist = 10) {
   cam.updateWorldMatrix(true, false);
   const pos = new THREE.Vector3();
   cam.getWorldPosition(pos);
@@ -248,12 +248,29 @@ function SceneContent() {
       "temp2",
       "temp3",
     ]);
+    const POINT_BASE_INTENSITY = 8;
+    const POINT005_INTENSITY = 14;
     model.traverse((o) => {
       if (hide.has(o.name)) o.visible = false;
       const m = o as THREE.Mesh;
       if (m.isMesh) {
         m.castShadow = false;
         m.receiveShadow = false;
+      }
+      const light = o as THREE.Light;
+      if (light.isLight) {
+        light.castShadow = false;
+        if ((light as THREE.PointLight).isPointLight) {
+          light.intensity = o.name === "Point.005" || o.name === "Point005"
+            ? POINT005_INTENSITY
+            : POINT_BASE_INTENSITY;
+        }
+        if ((light as THREE.SpotLight).isSpotLight) {
+          light.intensity = 12;
+        }
+        if ((light as THREE.DirectionalLight).isDirectionalLight) {
+          light.intensity = 0.6;
+        }
       }
     });
   }, [model]);
@@ -778,9 +795,7 @@ function SceneContent() {
   return (
     <>
       <CameraAspectSync />
-      <ambientLight intensity={0.5} />
-      <hemisphereLight color="#e8dfd5" groundColor="#3d3630" intensity={0.6} />
-      <directionalLight position={[6, 10, 5]} intensity={0.9} castShadow={false} />
+      <ambientLight intensity={0.18} />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {
@@ -843,7 +858,7 @@ export function Scene() {
         antialias: true,
         powerPreference: "high-performance",
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.35,
+        toneMappingExposure: 1.0,
       }}
       dpr={[1, 1.75]}
       style={{ width: "100%", height: "100%" }}
