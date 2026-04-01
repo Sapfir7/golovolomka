@@ -1,7 +1,6 @@
 /**
- * MemoryOrb — glass sphere with preview texture mapped onto inner sphere,
- * color-tinted, with view-dependent vignette that fades toward sphere edges.
- * Preview stays visible during flight.
+ * MemoryOrb — glass sphere with preview texture projected flat onto inner sphere,
+ * color-tinted, with view-dependent vignette. Preview stays visible during flight.
  */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
@@ -11,15 +10,14 @@ import { getPreviewTexture } from "../previewTextureCache";
 import { COLOR_HEX, EMISSIVE_HEX } from "../memoryPalette";
 
 const innerVert = `
+uniform float uRadius;
 varying vec2 vUv;
 varying float vFacing;
 void main() {
-  vUv = uv;
-  vec4 worldPos = modelMatrix * vec4(position, 1.0);
-  vec3 worldNorm = normalize(normalMatrix * normal);
-  vec3 viewDir = normalize(cameraPosition - worldPos.xyz);
-  vFacing = max(0.0, dot(worldNorm, viewDir));
-  gl_Position = projectionMatrix * viewMatrix * worldPos;
+  vUv = position.xy / uRadius * 0.5 + 0.5;
+  vec3 viewNorm = normalize(normalMatrix * normal);
+  vFacing = abs(viewNorm.z);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
@@ -31,15 +29,12 @@ uniform float uOpacity;
 varying vec2 vUv;
 varying float vFacing;
 void main() {
-  vec4 tex = texture2D(map, vUv);
+  vec4 tex = texture2D(map, clamp(vUv, 0.0, 1.0));
   vec3 rgb = tex.rgb;
   float lum = dot(rgb, vec3(0.299, 0.587, 0.114));
-  vec3 tinted = mix(rgb, uTint * (0.55 + 0.85 * lum), 0.4);
-
-  float vignette = smoothstep(0.0, 0.55, vFacing);
-  float alpha = uOpacity * vignette * tex.a;
-  if (alpha < 0.01) discard;
-  gl_FragColor = vec4(tinted, alpha);
+  vec3 tinted = mix(rgb, uTint * (0.55 + 0.85 * lum), 0.45);
+  float vignette = smoothstep(0.0, 0.5, vFacing);
+  gl_FragColor = vec4(tinted, uOpacity * vignette);
 }
 `;
 
@@ -74,6 +69,8 @@ export function MemoryOrb({
   const emissive = EMISSIVE_HEX[color];
   const tintColor = useMemo(() => new THREE.Color(hex), [hex]);
 
+  const innerR = radius * 0.96;
+
   useEffect(() => {
     if (!previewUrl) { setTexture(null); return; }
     let cancelled = false;
@@ -95,17 +92,18 @@ export function MemoryOrb({
         map: { value: texture },
         uTint: { value: tintColor.clone() },
         uOpacity: { value: 1.0 },
+        uRadius: { value: innerR },
       },
       vertexShader: innerVert,
       fragmentShader: innerFrag,
       transparent: true,
       toneMapped: false,
       depthWrite: false,
-      side: THREE.FrontSide,
+      side: THREE.DoubleSide,
     });
     innerMatRef.current = m;
     return m;
-  }, [texture, tintColor]);
+  }, [texture, tintColor, innerR]);
 
   useEffect(() => () => { innerMat?.dispose(); }, [innerMat]);
 
@@ -128,11 +126,9 @@ export function MemoryOrb({
     [onClick]
   );
 
-  const innerR = radius * 0.99;
-
   return (
     <group ref={groupRef} position={position} onClick={handleClick}>
-      {/* Inner sphere with preview texture, view-dependent vignette */}
+      {/* Inner sphere with flat-projected preview + view-dependent vignette */}
       {texture && innerMat ? (
         <mesh material={innerMat}>
           <sphereGeometry args={[innerR, 32, 32]} />

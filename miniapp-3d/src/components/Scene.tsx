@@ -1,5 +1,6 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
+import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import gsap from "gsap";
@@ -304,7 +305,7 @@ function SceneContent() {
         const mat = createErkanProjectionMaterial(texture, {
           vignetteTint: vigTint, vignetteStrength: 0.72,
           uvRotation: SCREEN_UV_ROTATION, mirrorX: SCREEN_MIRROR_X,
-          colorMix: 0.3,
+          colorMix: 0.4,
           texScale: 1 / VIGNETTE_EXPAND,
         });
         mat.uniforms.uOpacity = { value: opacity };
@@ -568,9 +569,10 @@ function SceneContent() {
 
       const tex = playbackTexRef.current;
       if (tex) applyScreenTexture(tex, 0);
+      aimSpotAtScreen();
       const fadeIn = { v: 0 };
       gsap.to(fadeIn, {
-        v: 1, duration: 0.7, ease: "power2.out",
+        v: 1, duration: 0.6, ease: "power2.out",
         onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
       });
     }, 2.5);
@@ -699,6 +701,15 @@ function SceneContent() {
           previewUrl={flying.memory.previewUrl} isSelected isTransitioning
         />
       )}
+
+      <EffectComposer>
+        <Bloom
+          luminanceThreshold={0.65}
+          luminanceSmoothing={0.4}
+          intensity={0.5}
+          mipmapBlur
+        />
+      </EffectComposer>
     </>
   );
 }

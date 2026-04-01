@@ -59,25 +59,32 @@ float fbm(vec3 p) {
 }
 
 void main() {
+  // Progressive reveal: tip first, then base
   float revealEdge = 1.0 - uReveal;
-  float revealMask = smoothstep(revealEdge, revealEdge + 0.25, vT);
+  float revealMask = smoothstep(revealEdge, revealEdge + 0.3, vT);
 
-  vec3 np = vLocalPos * 1.2 + vec3(uTime * 0.07, uTime * 0.1, uTime * 0.05);
+  // Axial gradient: opaque at tip (vT=1), transparent at base (vT=0)
+  float axialGrad = smoothstep(0.0, 0.6, vT);
+
+  // Low-frequency noise for organic, diffused look
+  vec3 np = vLocalPos * 0.8 + vec3(uTime * 0.05, uTime * 0.08, uTime * 0.04);
   float n = fbm(np);
-  float wisp = fbm(vLocalPos * 0.5 + vec3(0.0, uTime * 0.03, 0.0));
+  float wisp = fbm(vLocalPos * 0.35 + vec3(0.0, uTime * 0.02, 0.0));
 
-  // Break up cone silhouette with noise: holes where noise is low
-  float edgeBreak = fbm(vLocalPos * 2.5 + vec3(uTime * 0.12, 0.0, uTime * 0.08));
-  float breakMask = smoothstep(0.15, 0.5, edgeBreak);
+  // Smooth edge fade via view angle (hides geometric silhouette)
+  float edgeSoft = smoothstep(0.0, 0.4, vViewDot);
 
-  float vol = mix(0.2, 1.0, pow(vViewDot, 0.35));
-  float axial = smoothstep(0.0, 0.1, vT) * smoothstep(0.0, 0.1, 1.0 - vT);
+  // Noise-based silhouette breakup so the cone shape is not visible
+  float edgeBreak = fbm(vLocalPos * 1.2 + vec3(uTime * 0.08, 0.0, uTime * 0.06));
+  float breakFade = smoothstep(0.3, 0.6, edgeBreak);
 
-  float alpha = uStrength * axial * revealMask * vol * breakMask;
-  alpha *= mix(0.5, 1.0, n);
-  alpha *= mix(0.65, 1.0, wisp);
+  float alpha = uStrength * axialGrad * edgeSoft * revealMask * breakFade;
+  alpha *= mix(0.4, 1.0, n);
+  alpha *= mix(0.5, 1.0, wisp);
 
-  vec3 col = uColor * (0.85 + 0.2 * n);
+  // Emissive output — bright enough for bloom to pick up
+  vec3 col = uColor * (1.3 + 0.4 * n);
+
   gl_FragColor = vec4(col, alpha);
 }
 `;
