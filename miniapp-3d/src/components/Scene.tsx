@@ -459,22 +459,42 @@ function SceneContent() {
         const img = new Image();
         img.crossOrigin = "anonymous";
         img.onload = () => {
-          const w = img.naturalWidth || 1;
-          const h = img.naturalHeight || 1;
-          const canvas = document.createElement("canvas");
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return;
-          ctx.drawImage(img, 0, 0, w, h);
-          const t = new THREE.CanvasTexture(canvas);
-          t.colorSpace = THREE.SRGBColorSpace;
-          t.flipY = false;
-          prepareTexForPlane(t);
-          resizeErkanForMedia(w, h);
-          playbackTexRef.current = t;
-          setPlaybackTexture(t);
-          updateProjectionMaterial(t);
+          void (async () => {
+            let bitmap: ImageBitmap;
+            try {
+              bitmap = await createImageBitmap(img, { imageOrientation: "from-image" });
+            } catch {
+              try {
+                bitmap = await createImageBitmap(img);
+              } catch {
+                disposePlaybackResources();
+                updateProjectionMaterial(null);
+                return;
+              }
+            }
+            const w = bitmap.width || 1;
+            const h = bitmap.height || 1;
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              bitmap.close();
+              disposePlaybackResources();
+              updateProjectionMaterial(null);
+              return;
+            }
+            ctx.drawImage(bitmap, 0, 0, w, h);
+            bitmap.close();
+            const t = new THREE.CanvasTexture(canvas);
+            t.colorSpace = THREE.SRGBColorSpace;
+            t.flipY = false;
+            prepareTexForPlane(t);
+            resizeErkanForMedia(w, h);
+            playbackTexRef.current = t;
+            setPlaybackTexture(t);
+            updateProjectionMaterial(t);
+          })();
         };
         img.onerror = () => {
           disposePlaybackResources();

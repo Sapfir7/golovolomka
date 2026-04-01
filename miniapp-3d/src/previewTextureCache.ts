@@ -13,40 +13,60 @@ import * as THREE from "three";
 
 const cache = new Map<string, Promise<THREE.Texture | null>>();
 
+async function imageToOrientedBitmap(img: HTMLImageElement): Promise<ImageBitmap> {
+  try {
+    return await createImageBitmap(img, { imageOrientation: "from-image" });
+  } catch {
+    return createImageBitmap(img);
+  }
+}
+
 function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
-      const w = img.naturalWidth;
-      const h = img.naturalHeight;
-      if (!w || !h) {
-        resolve(null);
-        return;
-      }
-      const side = Math.min(w, h);
-      const sx = (w - side) / 2;
-      const sy = (h - side) / 2;
-      const canvas = document.createElement("canvas");
-      canvas.width = side;
-      canvas.height = side;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        resolve(null);
-        return;
-      }
-      ctx.drawImage(img, sx, sy, side, side, 0, 0, side, side);
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      /** WebGL UV на сфере: иначе превью часто вверх ногами при flipY по умолчанию. */
-      texture.flipY = false;
-      texture.wrapS = THREE.ClampToEdgeWrapping;
-      texture.wrapT = THREE.ClampToEdgeWrapping;
-      texture.minFilter = THREE.LinearMipmapLinearFilter;
-      texture.magFilter = THREE.LinearFilter;
-      texture.generateMipmaps = true;
-      texture.needsUpdate = true;
-      resolve(texture);
+      void (async () => {
+        let bitmap: ImageBitmap | null = null;
+        try {
+          bitmap = await imageToOrientedBitmap(img);
+        } catch {
+          resolve(null);
+          return;
+        }
+        const w = bitmap.width;
+        const h = bitmap.height;
+        if (!w || !h) {
+          bitmap.close();
+          resolve(null);
+          return;
+        }
+        const side = Math.min(w, h);
+        const sx = (w - side) / 2;
+        const sy = (h - side) / 2;
+        const canvas = document.createElement("canvas");
+        canvas.width = side;
+        canvas.height = side;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          bitmap.close();
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(bitmap, sx, sy, side, side, 0, 0, side, side);
+        bitmap.close();
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        /** WebGL UV на сфере: иначе превью часто вверх ногами при flipY по умолчанию. */
+        texture.flipY = false;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.generateMipmaps = true;
+        texture.needsUpdate = true;
+        resolve(texture);
+      })();
     };
     img.onerror = () => resolve(null);
     img.src = url;
