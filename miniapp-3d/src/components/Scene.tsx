@@ -20,6 +20,7 @@ const SCREEN_MIRROR_X = true;
 
 const SPOT_BASE_INTENSITY = 12;
 const LIGHT_DIM_FACTOR = 0.35;
+const VIGNETTE_EXPAND = 2.2;
 
 const _fwd = new THREE.Vector3(0, 0, -1);
 const _quat = new THREE.Quaternion();
@@ -104,9 +105,10 @@ function SceneContent() {
 
   const coneMeshRef = useRef<THREE.Mesh | null>(null);
   const coneMatRef = useRef<THREE.ShaderMaterial | null>(null);
+  const coneOrigScaleRef = useRef<THREE.Vector3 | null>(null);
   const beamStrengthRef = useRef(0);
   const spotScreenRef = useRef<THREE.SpotLight | null>(null);
-  const lightDimRef = useRef(1); // 1 = normal, LIGHT_DIM_FACTOR = dimmed
+  const lightDimRef = useRef(1);
   const sceneLightsRef = useRef<{ light: THREE.Light; base: number }[]>([]);
 
   useEffect(() => {
@@ -203,17 +205,14 @@ function SceneContent() {
     ]);
     model.traverse((o) => { if (hideNames.has(o.name)) o.visible = false; });
 
-    // Setup Conus_light mesh
     const conusNode = model.getObjectByName("Conus_light");
     if (conusNode) {
+      coneOrigScaleRef.current = conusNode.scale.clone();
       conusNode.traverse((ch) => {
         const mesh = ch as THREE.Mesh;
         if (mesh.isMesh && mesh.geometry) {
           coneMeshRef.current = mesh;
-          const mat = createConeBeamMaterial(mesh.geometry, {
-            color: "#fff6e0",
-            strength: 0,
-          });
+          const mat = createConeBeamMaterial(mesh.geometry, { color: "#fff6e0", strength: 0 });
           coneMatRef.current = mat;
           mesh.material = mat;
         }
@@ -252,12 +251,35 @@ function SceneContent() {
       let h: number, w: number;
       if (ar >= 1) { w = maxW; h = w / ar; if (h > maxH) { h = maxH; w = h * ar; } }
       else { h = maxH; w = h * ar; if (w > maxW) { w = maxW; h = w / ar; } }
-      obj.scale.set(h, base.y, w);
+      obj.scale.set(h * VIGNETTE_EXPAND, base.y, w * VIGNETTE_EXPAND);
     },
     [marker.screenBaseScale, marker.screenObj]
   );
 
-  const lastMediaSizeRef = useRef<{ w: number; h: number } | null>(null);
+  const adaptConeToScreen = useCallback(() => {
+    const conusNode = model.getObjectByName("Conus_light");
+    const orig = coneOrigScaleRef.current;
+    const obj = marker.screenObj;
+    if (!conusNode || !orig || !obj) return;
+    const base = marker.screenBaseScale;
+    const ratioX = obj.scale.x / base.x;
+    const ratioZ = obj.scale.z / base.z;
+    conusNode.scale.set(orig.x * ratioX, orig.y, orig.z * ratioZ);
+  }, [model, marker.screenObj, marker.screenBaseScale]);
+
+  const aimSpotAtScreen = useCallback(() => {
+    const spot = spotScreenRef.current;
+    const obj = marker.screenObj;
+    if (!spot || !obj || !marker.screenCenter) return;
+    spot.target.position.copy(marker.screenCenter);
+    spot.target.updateMatrixWorld();
+    const areaH = obj.scale.x;
+    const areaW = obj.scale.z;
+    const diag = Math.sqrt(areaW * areaW + areaH * areaH) * 0.5;
+    const dist = spot.position.distanceTo(marker.screenCenter);
+    spot.angle = Math.atan2(diag, dist) * 1.1;
+    spot.penumbra = 0.4;
+  }, [marker.screenObj, marker.screenCenter]);
 
   const applyScreenTexture = useCallback(
     (texture: THREE.Texture, opacity: number) => {
@@ -275,6 +297,7 @@ function SceneContent() {
           vignetteTint: vigTint, vignetteStrength: 0.72,
           uvRotation: SCREEN_UV_ROTATION, mirrorX: SCREEN_MIRROR_X,
           colorMix: 0.3,
+          texScale: 1 / VIGNETTE_EXPAND,
         });
         mat.uniforms.uOpacity = { value: opacity };
         screenShaderRef.current = mat;
@@ -293,34 +316,26 @@ function SceneContent() {
 
   useEffect(() => { hideScreen(); }, [hideScreen]);
 
-  /* ── Update cone visibility for Conus_light parent ── */
-  const showCone = useCallback(() => {
+  /* ── Cone visibility ── */
+  const showCone = useCallback((color?: THREE.Color) => {
     const conusNode = model.getObjectByName("Conus_light");
     if (conusNode) conusNode.visible = true;
+    if (color && coneMatRef.current) {
+      coneMatRef.current.uniforms.uColor.value.copy(color);
+    }
   }, [model]);
+
   const hideCone = useCallback(() => {
     const conusNode = model.getObjectByName("Conus_light");
     if (conusNode) conusNode.visible = false;
     beamStrengthRef.current = 0;
-    if (coneMatRef.current) coneMatRef.current.uniforms.uStrength.value = 0;
+    if (coneMatRef.current) {
+      coneMatRef.current.uniforms.uStrength.value = 0;
+      coneMatRef.current.uniforms.uReveal.value = 0;
+    }
+    const orig = coneOrigScaleRef.current;
+    if (conusNode && orig) conusNode.scale.copy(orig);
   }, [model]);
-
-  /* ── Spot_screen aiming at screen ── */
-  const aimSpotAtScreen = useCallback((mw: number, mh: number) => {
-    const spot = spotScreenRef.current;
-    if (!spot || !marker.screenCenter) return;
-    spot.target.position.copy(marker.screenCenter);
-    spot.target.updateMatrixWorld();
-    const ar = mw / mh;
-    const base = marker.screenBaseScale;
-    const maxH = base.x, maxW = base.z;
-    let areaW: number, areaH: number;
-    if (ar >= 1) { areaW = maxW; areaH = areaW / ar; } else { areaH = maxH; areaW = areaH * ar; }
-    const diag = Math.sqrt(areaW * areaW + areaH * areaH) * 0.5;
-    const dist = spot.position.distanceTo(marker.screenCenter);
-    spot.angle = Math.atan2(diag, dist) * 1.1;
-    spot.penumbra = 0.4;
-  }, [marker.screenBaseScale, marker.screenCenter]);
 
   /* ── Camera lerp + per-frame uniforms ── */
   useFrame((_, delta) => {
@@ -330,24 +345,20 @@ function SceneContent() {
     lookCurrent.current.lerp(cameraTarget.current.look, alpha);
     camera.lookAt(lookCurrent.current);
 
-    // Screen opacity
     const mat = screenShaderRef.current;
     if (mat && mat.uniforms.uOpacity) mat.uniforms.uOpacity.value = screenOpacityRef.current;
     if (mat && mat.uniforms.uTime) mat.uniforms.uTime.value += delta;
 
-    // Video texture update
     const vt = deskVideoTextureRef.current;
     if (vt && vt.image instanceof HTMLVideoElement && vt.image.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
       vt.needsUpdate = true;
 
-    // Beam uniform
     const cm = coneMatRef.current;
     if (cm) {
       cm.uniforms.uStrength.value = beamStrengthRef.current;
       cm.uniforms.uTime.value += delta;
     }
 
-    // Light dimming
     const dim = lightDimRef.current;
     for (const entry of sceneLightsRef.current) {
       entry.light.intensity = entry.base * dim;
@@ -382,8 +393,8 @@ function SceneContent() {
           t.wrapS = THREE.ClampToEdgeWrapping; t.wrapT = THREE.ClampToEdgeWrapping;
           t.needsUpdate = true;
           resizeScreenForMedia(w, h);
-          aimSpotAtScreen(w, h);
-          lastMediaSizeRef.current = { w, h };
+          adaptConeToScreen();
+          aimSpotAtScreen();
           playbackTexRef.current = t;
           setPlaybackTexture(t);
         };
@@ -400,8 +411,8 @@ function SceneContent() {
         video.addEventListener("loadedmetadata", () => {
           if (video.videoWidth > 0 && video.videoHeight > 0) {
             resizeScreenForMedia(video.videoWidth, video.videoHeight);
-            aimSpotAtScreen(video.videoWidth, video.videoHeight);
-            lastMediaSizeRef.current = { w: video.videoWidth, h: video.videoHeight };
+            adaptConeToScreen();
+            aimSpotAtScreen();
           }
           texture.needsUpdate = true;
         }, { once: true });
@@ -411,7 +422,7 @@ function SceneContent() {
         setPlaybackTexture(texture);
       }
     },
-    [aimSpotAtScreen, disposePlaybackResources, resizeScreenForMedia]
+    [adaptConeToScreen, aimSpotAtScreen, disposePlaybackResources, resizeScreenForMedia]
   );
 
   useEffect(() => {
@@ -521,25 +532,32 @@ function SceneContent() {
       animateOrb(t01, [t02], 0.7);
     }, 1.8);
 
-    // 3) After ball drop, 0.4s pause: beam fades in + memory starts appearing + lights dim
+    // 3) 0.4s pause: beam reveals tip→base, memory fades in, lights dim
     const beamIn = { v: 0 };
+    const revealIn = { v: 0 };
     const dimmer = { v: 1 };
     tl.add(() => {
-      showCone();
+      const vigTint = new THREE.Color(COLOR_HEX[memory.color] ?? "#261a32");
+      adaptConeToScreen();
+      showCone(vigTint);
 
-      // Beam fade in (over the 0.4s pause + continues into camera movement)
       gsap.to(beamIn, {
         v: 0.45, duration: 0.6, ease: "power2.out",
         onUpdate: () => { beamStrengthRef.current = beamIn.v; },
       });
 
-      // Dim lights
+      gsap.to(revealIn, {
+        v: 1, duration: 0.6, ease: "power2.out",
+        onUpdate: () => {
+          if (coneMatRef.current) coneMatRef.current.uniforms.uReveal.value = revealIn.v;
+        },
+      });
+
       gsap.to(dimmer, {
         v: LIGHT_DIM_FACTOR, duration: 0.8, ease: "power2.inOut",
         onUpdate: () => { lightDimRef.current = dimmer.v; },
       });
 
-      // Memory starts appearing
       const tex = playbackTexRef.current;
       if (tex) applyScreenTexture(tex, 0);
       const fadeIn = { v: 0 };
@@ -549,7 +567,7 @@ function SceneContent() {
       });
     }, 2.5);
 
-    // 4) Camera: Cam02 → Cam03 → CamMain (1.6s, starts 0.4s after pause begins)
+    // 4) Camera: Cam02 → Cam03 → CamMain (1.6s, starts after 0.4s pause)
     tl.add(() => {
       animateCam([f02, f03, fMain], 1.6);
     }, 2.9);
@@ -562,9 +580,9 @@ function SceneContent() {
       setPhase("DESK");
     }, 4.5);
   }, [
-    applyScreenTexture, hideScreen, hideCone, showCone, initData, loadPlaybackTexture,
-    marker, memories, phase, selectedMemoryId, setLoadingPlayback,
-    setPhase, setPlayback, slotForIndex, telegramId,
+    adaptConeToScreen, applyScreenTexture, hideScreen, hideCone, showCone,
+    initData, loadPlaybackTexture, marker, memories, phase, selectedMemoryId,
+    setLoadingPlayback, setPhase, setPlayback, slotForIndex, telegramId,
   ]);
 
   /* ══════════════════════════════════════════════════
@@ -585,9 +603,10 @@ function SceneContent() {
     const t03 = marker.traj03 ?? marker.camMainFrame.pos.clone().add(new THREE.Vector3(2, 0, 0));
     const t04 = marker.traj04 ?? slot.clone().add(new THREE.Vector3(0, 0.3, -2));
 
-    // 1) Fade out memory + beam + restore lights (0.8s)
+    // 1) Fade out memory + beam + reveal reverse + restore lights (0.8s)
     const fadeOut = { v: 1 };
     const beamOut = { v: beamStrengthRef.current };
+    const revealOut = { v: coneMatRef.current?.uniforms.uReveal.value ?? 1 };
     const lightRestore = { v: lightDimRef.current };
     tl.add(() => {
       gsap.to(fadeOut, {
@@ -597,6 +616,12 @@ function SceneContent() {
       gsap.to(beamOut, {
         v: 0, duration: 0.8, ease: "power2.out",
         onUpdate: () => { beamStrengthRef.current = beamOut.v; },
+      });
+      gsap.to(revealOut, {
+        v: 0, duration: 0.8, ease: "power2.out",
+        onUpdate: () => {
+          if (coneMatRef.current) coneMatRef.current.uniforms.uReveal.value = revealOut.v;
+        },
       });
       gsap.to(lightRestore, {
         v: 1, duration: 1.0, ease: "power2.inOut",

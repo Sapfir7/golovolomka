@@ -26,6 +26,7 @@ uniform float uVigStr;
 uniform float uOpacity;
 uniform float uColorMix;
 uniform float uTime;
+uniform float uTexScale;
 varying vec2 vUv;
 
 float hash2(vec2 p) {
@@ -45,8 +46,7 @@ float noise2(vec2 p) {
 }
 
 float fbm2(vec2 p) {
-  float v = 0.0;
-  float a = 0.5;
+  float v = 0.0, a = 0.5;
   for (int i = 0; i < 4; i++) {
     v += a * noise2(p);
     p *= 2.2;
@@ -59,45 +59,55 @@ void main() {
   vec2 st = vUv;
   if (uMirrorX > 0.5) st.x = 1.0 - st.x;
 
-  // Elliptical distance from center (oval mask)
+  // Remap UV so the memory texture sits in the center of the larger screen
+  vec2 texUv = (st - 0.5) / uTexScale + 0.5;
+  bool inTex = texUv.x > 0.001 && texUv.x < 0.999 &&
+               texUv.y > 0.001 && texUv.y < 0.999;
+  vec4 texel = inTex ? texture2D(map, texUv) : vec4(0.0);
+
+  // Elliptical distance from center (full screen space)
   vec2 q = (vUv - 0.5) * 2.0;
   float ellipse = length(q);
 
-  // Noisy edge: fbm displaces the oval boundary
-  vec2 noiseCoord = vUv * 6.0 + vec2(uTime * 0.08, uTime * 0.05);
-  float edgeNoise = fbm2(noiseCoord) * 0.35;
+  // Luminance for tinting
+  float lum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
 
-  // Inner clear zone → fibrous dissolve → fully transparent
-  float innerEdge = 0.6;
-  float outerEdge = 1.05 + edgeNoise;
-  float ovalMask = 1.0 - smoothstep(innerEdge, outerEdge, ellipse);
+  // Tint memory toward vignette color
+  vec3 tinted = mix(texel.rgb, uVigTint * (0.5 + lum * 0.9), uColorMix);
 
-  // Extra fibers at the boundary
-  float fiberZone = smoothstep(innerEdge - 0.1, innerEdge + 0.15, ellipse) *
-                    (1.0 - smoothstep(outerEdge - 0.1, outerEdge + 0.05, ellipse));
-  float fibers = fbm2(vUv * 18.0 + vec2(uTime * 0.12, -uTime * 0.08));
-  ovalMask += fiberZone * fibers * 0.25;
-  ovalMask = clamp(ovalMask, 0.0, 1.0);
+  // Memory oval boundary: memory inscribed inside the vignette ellipse
+  float memEdge = uTexScale;
+  float memFade = smoothstep(memEdge * 0.6, memEdge * 1.1, ellipse);
 
-  // Sample texture
-  vec4 t = texture2D(map, clamp(st, 0.001, 0.999));
-  vec3 rgb = t.rgb;
+  // Vignette color with animated noise texture
+  float vigNoise = fbm2(vUv * 4.0 + vec2(uTime * 0.05, uTime * 0.03));
+  vec3 vigCol = uVigTint * (0.1 + 0.2 * vigNoise);
 
-  // Color tint toward memory color
-  float lum = dot(rgb, vec3(0.299, 0.587, 0.114));
-  vec3 tinted = mix(rgb, uVigTint * (0.5 + lum * 0.9), uColorMix);
+  // Blend memory content → vignette color
+  vec3 rgb = mix(tinted, vigCol, memFade);
 
-  // Vignette glow at edges (colored)
-  float vigDist = smoothstep(0.35, 1.1, ellipse) * uVigStr;
-  vec3 glowCol = uVigTint * (0.35 + 0.5 * lum);
-  vec3 final = mix(tinted, glowCol, vigDist);
+  // Glow bloom ring at memory boundary
+  float bloom = smoothstep(memEdge * 0.45, memEdge * 0.85, ellipse) *
+                (1.0 - smoothstep(memEdge * 0.85, memEdge * 1.5, ellipse));
+  rgb += uVigTint * bloom * uVigStr * 0.3;
 
-  // Edge glow bloom
-  float bloom = smoothstep(innerEdge - 0.05, innerEdge + 0.2, ellipse) *
-                (1.0 - smoothstep(outerEdge - 0.15, outerEdge + 0.1, ellipse));
-  final += uVigTint * bloom * 0.2;
+  // Outer dissolution mask with noisy boundary
+  float outerNoise = fbm2(vUv * 6.0 + vec2(uTime * 0.08, uTime * 0.05));
+  float outerEdge = 0.85 + outerNoise * 0.22;
+  float outerMask = 1.0 - smoothstep(outerEdge - 0.15, outerEdge + 0.08, ellipse);
 
-  gl_FragColor = vec4(final, ovalMask * uOpacity);
+  // Wispy fibers at the outer boundary
+  float fiberZone = smoothstep(0.55, 0.78, ellipse) *
+                    (1.0 - smoothstep(outerEdge - 0.05, outerEdge + 0.12, ellipse));
+  float fibers = fbm2(vUv * 18.0 + vec2(uTime * 0.1, -uTime * 0.07));
+  outerMask += fiberZone * fibers * 0.22;
+  outerMask = clamp(outerMask, 0.0, 1.0);
+
+  // Subtle warm inner glow
+  float innerGlow = 1.0 - smoothstep(0.0, memEdge * 0.6, ellipse);
+  rgb += uVigTint * innerGlow * 0.06;
+
+  gl_FragColor = vec4(rgb, outerMask * uOpacity);
 }
 `;
 
@@ -107,6 +117,7 @@ export interface ErkanProjectionUniforms {
   uvRotation: number;
   mirrorX: boolean;
   colorMix?: number;
+  texScale?: number;
 }
 
 export function createErkanProjectionMaterial(
@@ -122,6 +133,7 @@ export function createErkanProjectionMaterial(
       uMirrorX: { value: u.mirrorX ? 1.0 : 0.0 },
       uOpacity: { value: 1.0 },
       uColorMix: { value: u.colorMix ?? 0.3 },
+      uTexScale: { value: u.texScale ?? 1.0 },
       uTime: { value: 0 },
     },
     vertexShader,
