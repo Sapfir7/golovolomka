@@ -9,26 +9,17 @@ import type { Memory, Playback } from "../types";
 import { COLOR_HEX } from "../memoryPalette";
 import { createErkanProjectionMaterial } from "../materials/erkanProjectionMaterial";
 import { fetchPlayback } from "../api/client";
-import { hasCustomWaypoints, waypointsToVectors } from "../cameraPath";
 
-const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik1.glb`;
+const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik2.glb`;
 const ORB_RADIUS = 0.1125;
+const NUM_SLOTS = 5;
 
-/**
- * Ноды камер GLB: полка / стол (при перепутанных ролях в Blender — поменять местами).
- */
-const GLTF_CAMERA_NODE_SHELF = "Camera.001";
-const GLTF_CAMERA_NODE_DESK = "Camera";
+const SCREEN_UV_ROTATION = -Math.PI / 2;
+const SCREEN_MIRROR_X = true;
 
-/** UV Erkan повёрнуты в GLB — компенсируем. */
-const ERKAN_TEX_ROTATION = -Math.PI / 2;
-/** Зеркалит изображение по горизонтали на экране Erkan. */
-const ERKAN_MIRROR_X = true;
+const _fwd = new THREE.Vector3(0, 0, -1);
+const _quat = new THREE.Quaternion();
 
-const _camLocalForward = new THREE.Vector3(0, 0, -1);
-const _camWorldQuat = new THREE.Quaternion();
-
-/** Aspect = размер буфера WebGL (`domElement.width/height`), синхронно с ресайзом / DPR (в т.ч. Telegram). */
 function CameraAspectSync() {
   const { camera, gl, size } = useThree();
   const sync = useCallback(() => {
@@ -43,94 +34,36 @@ function CameraAspectSync() {
       camera.updateProjectionMatrix();
     }
   }, [camera, gl]);
-  useEffect(() => {
-    sync();
-  }, [sync, size.width, size.height]);
-  useFrame(() => {
-    sync();
-  });
+  useEffect(() => { sync(); }, [sync, size.width, size.height]);
+  useFrame(() => { sync(); });
   return null;
 }
 
-function getPerspectiveCamera(root: THREE.Object3D, name: string): THREE.PerspectiveCamera | null {
+function findCam(root: THREE.Object3D, name: string): THREE.PerspectiveCamera | null {
   let out: THREE.PerspectiveCamera | null = null;
   root.traverse((o) => {
     if (o.name !== name) return;
-    const p = o as THREE.PerspectiveCamera;
-    if (p.isPerspectiveCamera) {
-      out = p;
-      return;
-    }
+    if ((o as THREE.PerspectiveCamera).isPerspectiveCamera) { out = o as THREE.PerspectiveCamera; return; }
     for (const ch of o.children) {
-      const c = ch as THREE.PerspectiveCamera;
-      if (c.isPerspectiveCamera) {
-        out = c;
-        return;
-      }
+      if ((ch as THREE.PerspectiveCamera).isPerspectiveCamera) { out = ch as THREE.PerspectiveCamera; return; }
     }
   });
   return out;
 }
 
-/** Точка взгляда из **трансформа камеры в GLB** (локальный −Z → мир). */
-function cameraFraming(cam: THREE.PerspectiveCamera, lookDist = 10) {
+function camFrame(cam: THREE.PerspectiveCamera, dist = 10) {
   cam.updateWorldMatrix(true, false);
-  const pos = new THREE.Vector3();
-  cam.getWorldPosition(pos);
-  cam.getWorldQuaternion(_camWorldQuat);
-  const dir = _camLocalForward.clone().applyQuaternion(_camWorldQuat).normalize();
-  const look = pos.clone().addScaledVector(dir, lookDist);
-  return { pos, look };
+  const pos = new THREE.Vector3(); cam.getWorldPosition(pos);
+  cam.getWorldQuaternion(_quat);
+  const dir = _fwd.clone().applyQuaternion(_quat).normalize();
+  return { pos, look: pos.clone().addScaledVector(dir, dist) };
 }
 
-function bezierPoint(t: number, p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3) {
-  const mt = 1 - t;
-  return new THREE.Vector3(
-    mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x,
-    mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y,
-    mt * mt * p0.z + 2 * mt * t * p1.z + t * t * p2.z
-  );
+function worldPos(model: THREE.Object3D, name: string): THREE.Vector3 | null {
+  const o = model.getObjectByName(name);
+  if (!o) return null;
+  const v = new THREE.Vector3(); o.getWorldPosition(v); return v;
 }
-
-function smoothArcMid(a: THREE.Vector3, b: THREE.Vector3) {
-  const m = a.clone().add(b).multiplyScalar(0.5);
-  m.y += 0.12;
-  return m;
-}
-
-/** Путь шара: слот → temp1 → temp2 → temp3 → финал (temp3 — последняя перед проектором). */
-function orbFlightCurve(
-  from: THREE.Vector3,
-  t1: THREE.Vector3,
-  t2: THREE.Vector3,
-  t3: THREE.Vector3,
-  end: THREE.Vector3
-) {
-  return new THREE.CatmullRomCurve3(
-    [from.clone(), t1.clone(), t2.clone(), t3.clone(), end.clone()],
-    false,
-    "catmullrom",
-    0.4
-  );
-}
-
-type StoredArc =
-  | {
-      kind: "bezier";
-      p0: THREE.Vector3;
-      p1: THREE.Vector3;
-      p2: THREE.Vector3;
-      l0: THREE.Vector3;
-      l1: THREE.Vector3;
-      l2: THREE.Vector3;
-      duration: number;
-    }
-  | {
-      kind: "catmull";
-      posPts: THREE.Vector3[];
-      lookPts: THREE.Vector3[];
-      duration: number;
-    };
 
 const _desiredPos = new THREE.Vector3();
 
@@ -154,631 +87,397 @@ function SceneContent() {
   const [flying, setFlying] = useState<{ memory: Memory; pos: THREE.Vector3 } | null>(null);
   const [deskMemoryId, setDeskMemoryId] = useState<string | null>(null);
   const [playbackTexture, setPlaybackTexture] = useState<THREE.Texture | null>(null);
+  const [screenOpacity, setScreenOpacity] = useState(0);
 
-  useEffect(() => {
-    if (phase !== "DESK" || !deskMemoryId) {
-      setDeskOrbTint(null);
-      return;
-    }
-    const mem = memories.find((m) => m.id === deskMemoryId);
-    setDeskOrbTint(mem?.color ?? null);
-  }, [phase, deskMemoryId, memories, setDeskOrbTint]);
   const deskVideoTextureRef = useRef<THREE.VideoTexture | null>(null);
   const deskVideoElRef = useRef<HTMLVideoElement | null>(null);
   const playbackTexRef = useRef<THREE.Texture | null>(null);
-  const cameraArcTweenRef = useRef<gsap.core.Tween | null>(null);
-  const cameraArcProgressRef = useRef({ t: 0 });
-  const lastArcRef = useRef<StoredArc | null>(null);
-
-  const lastSelectedIndex = useRef(0);
   const lastAppliedPlaybackUrl = useRef<string | null>(null);
+  const timelineRef = useRef<gsap.core.Timeline | null>(null);
+
+  const cameraTarget = useRef({ pos: new THREE.Vector3(), look: new THREE.Vector3() });
+  const lookCurrent = useRef(new THREE.Vector3());
+
+  useEffect(() => {
+    if (phase !== "DESK" || !deskMemoryId) { setDeskOrbTint(null); return; }
+    const mem = memories.find((m) => m.id === deskMemoryId);
+    setDeskOrbTint(mem?.color ?? null);
+  }, [phase, deskMemoryId, memories, setDeskOrbTint]);
 
   const marker = useMemo(() => {
     model.updateMatrixWorld(true);
-    const get = (name: string) => model.getObjectByName(name);
-    const worldPos = (name: string) => {
-      const o = get(name);
-      if (!o) return null;
-      const v = new THREE.Vector3();
-      o.getWorldPosition(v);
-      return v;
-    };
     const fb = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
-    const slotFallback = fb(4.55, 1.45, 0.75);
-    /** В GLB Blender: `Slot00`…`Slot09` (без подчёркивания). */
-    const slots = Array.from({ length: 10 }, (_, i) => {
-      const name = `Slot${String(i).padStart(2, "0")}`;
-      return worldPos(name) ?? slotFallback.clone();
-    });
+    const wp = (n: string) => worldPos(model, n);
 
-    const erkanObj = get("Erkan");
-    const erkanPivot = worldPos("Erkan") ?? fb(-7.81, 2.81, -3.72);
-    const erkanCenter = (() => {
-      if (!erkanObj) return erkanPivot.clone();
-      const box = new THREE.Box3().setFromObject(erkanObj);
-      if (!box.isEmpty()) return box.getCenter(new THREE.Vector3());
-      const v = new THREE.Vector3();
-      erkanObj.getWorldPosition(v);
-      return v;
+    const slots = Array.from({ length: NUM_SLOTS }, (_, i) =>
+      wp(`Slot${String(i).padStart(2, "0")}`) ?? fb(5.097 - i * 0.27, 1.545, 0.75)
+    );
+
+    const screenObj = model.getObjectByName("screen") ?? null;
+    const screenCenter = (() => {
+      if (!screenObj) return fb(-7.7, 2.44, -3.72);
+      const box = new THREE.Box3().setFromObject(screenObj);
+      return box.isEmpty() ? fb(-7.7, 2.44, -3.72) : box.getCenter(new THREE.Vector3());
     })();
 
-    const firstNamed = (...names: string[]) => {
-      for (const n of names) {
-        const v = worldPos(n);
-        if (v) return v;
-      }
-      return null;
-    };
+    const camShelf = findCam(model, "Camera_shkaf_00");
+    const camMain = findCam(model, "Camera");
+    const shelfFrame = camShelf ? camFrame(camShelf) : { pos: fb(4.68, 1.09, -3.3), look: fb(4.55, 1.09, 0.75) };
 
-    const roomCenter = new THREE.Vector3();
-    slots.forEach((s) => roomCenter.add(s));
-    roomCenter.multiplyScalar(1 / Math.max(slots.length, 1));
-
-    const camShelf = getPerspectiveCamera(model, GLTF_CAMERA_NODE_SHELF);
-    const camProj = getPerspectiveCamera(model, GLTF_CAMERA_NODE_DESK);
-    const shelfFrame = camShelf ? cameraFraming(camShelf) : { pos: fb(4.54, 1.11, -2.5), look: slots[4]?.clone() ?? slotFallback.clone() };
-    const projFrame = camProj ? cameraFraming(camProj) : { pos: fb(-2.61, 2.57, -3.74), look: erkanCenter.clone() };
+    const cam01 = findCam(model, "Camera_01");
+    const cam02 = findCam(model, "Camera_02");
+    const cam03 = findCam(model, "Camera_03");
+    const cam04 = findCam(model, "Camera_04");
 
     return {
       slots,
-      /** Маркер посадки шара у проектора; в текущем GLB нет `pos_final` — центр Erkan. */
-      stand: firstNamed("pos_final", "Pos_final") ?? erkanCenter.clone(),
+      screenObj,
+      screenCenter,
+      screenBaseScale: screenObj?.scale.clone() ?? fb(1, 1, 1),
       shelfFrame,
-      projFrame,
+      cam01Frame: cam01 ? camFrame(cam01) : null,
+      cam02Frame: cam02 ? camFrame(cam02) : null,
+      cam03Frame: cam03 ? camFrame(cam03) : null,
+      cam04Frame: cam04 ? camFrame(cam04) : null,
+      camMainFrame: camMain ? camFrame(camMain) : { pos: fb(2.18, 1.68, -3.59), look: screenCenter.clone() },
       camShelf,
-      camProj,
-      camTemp: firstNamed("Cam_temp", "cam_temp"),
-      temp1: firstNamed("Temp1", "temp1"),
-      temp2: firstNamed("Temp2", "temp2"),
-      temp3: firstNamed("Temp3", "temp3"),
-      erkanObj,
-      erkanBaseScale: erkanObj?.scale.clone() ?? fb(2.02, 1, 1.35),
-      roomCenter,
+      traj00: wp("trajectory_00"),
+      traj01: wp("trajectory_01"),
+      traj02: wp("trajectory_02"),
+      traj03: wp("trajectory_03"),
+      traj04: wp("trajectory_04"),
+      roomCenter: slots.reduce((a, s) => a.add(s), new THREE.Vector3()).multiplyScalar(1 / slots.length),
     };
   }, [model]);
 
+  /* ── Lights ── */
   useEffect(() => {
-    const hide = new Set([
-      "Cam_temp",
-      "cam_temp",
-      "Temp1",
-      "Temp2",
-      "Temp3",
-      "temp1",
-      "temp2",
-      "temp3",
-    ]);
-    const POINT_BASE_INTENSITY = 8;
-    const POINT005_INTENSITY = 14;
+    const POINT_BASE = 8;
+    const POINT005 = 14;
     model.traverse((o) => {
-      if (hide.has(o.name)) o.visible = false;
       const m = o as THREE.Mesh;
-      if (m.isMesh) {
-        m.castShadow = false;
-        m.receiveShadow = false;
-      }
+      if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; }
       const light = o as THREE.Light;
-      if (light.isLight) {
-        light.castShadow = false;
-        if ((light as THREE.PointLight).isPointLight) {
-          light.intensity = o.name === "Point.005" || o.name === "Point005"
-            ? POINT005_INTENSITY
-            : POINT_BASE_INTENSITY;
-        }
-        if ((light as THREE.SpotLight).isSpotLight) {
-          light.intensity = 12;
-        }
-        if ((light as THREE.DirectionalLight).isDirectionalLight) {
-          light.intensity = 0.6;
-        }
+      if (!light.isLight) return;
+      light.castShadow = false;
+      if ((light as THREE.PointLight).isPointLight) {
+        light.intensity = (o.name === "Point.005" || o.name === "Point005") ? POINT005 : POINT_BASE;
       }
+      if ((light as THREE.SpotLight).isSpotLight) light.intensity = 12;
+      if ((light as THREE.DirectionalLight).isDirectionalLight) light.intensity = 0.6;
     });
+    const hideNames = new Set(["trajectory_00", "trajectory_01", "trajectory_02", "trajectory_03", "trajectory_04"]);
+    model.traverse((o) => { if (hideNames.has(o.name)) o.visible = false; });
   }, [model]);
 
+  /* ── Initial camera ── */
   useEffect(() => {
     const c = marker.camShelf;
-    if (!c || !(camera instanceof THREE.PerspectiveCamera)) return;
-    camera.fov = c.fov;
-    camera.near = c.near;
-    camera.far = c.far;
-    camera.updateProjectionMatrix();
-  }, [camera, marker.camShelf]);
-
-  const cameraTarget = useRef({
-    pos: marker.shelfFrame.pos.clone(),
-    look: marker.shelfFrame.look.clone(),
-  });
-  const lookCurrent = useRef(cameraTarget.current.look.clone());
-
-  const resetErkanScale = useCallback(() => {
-    if (marker.erkanObj) marker.erkanObj.scale.copy(marker.erkanBaseScale);
-  }, [marker.erkanBaseScale, marker.erkanObj]);
-
-  /**
-   * Плоскость Erkan под аспект кадра: maxH = base.x, maxW = base.z (как в исходном GLB).
-   * Текстура 1:1 по UV — без contain в шейдере.
-   */
-  const resizeErkanForMedia = useCallback(
-    (mediaWidth: number, mediaHeight: number) => {
-      const obj = marker.erkanObj;
-      if (!obj || !mediaWidth || !mediaHeight) return;
-      const base = marker.erkanBaseScale;
-      const maxH = base.x;
-      const maxW = base.z;
-      const ar = mediaWidth / mediaHeight;
-      let h: number;
-      let w: number;
-      if (ar >= 1) {
-        w = maxW;
-        h = w / ar;
-        if (h > maxH) {
-          h = maxH;
-          w = h * ar;
-        }
-      } else {
-        h = maxH;
-        w = h * ar;
-        if (w > maxW) {
-          w = maxW;
-          h = w / ar;
-        }
-      }
-      obj.scale.set(h, base.y, w);
-    },
-    [marker.erkanBaseScale, marker.erkanObj]
-  );
-
-  const erkanShaderMatRef = useRef<THREE.ShaderMaterial | null>(null);
-
-  const updateProjectionMaterial = useCallback(
-    (texture: THREE.Texture | null) => {
-      const placeholderMat = () =>
-        new THREE.MeshStandardMaterial({
-          color: "#0a0612",
-          emissive: "#1a1028",
-          emissiveIntensity: 0.08,
-          roughness: 0.9,
-          metalness: 0,
-          transparent: true,
-          opacity: 0.95,
-          side: THREE.DoubleSide,
-        });
-      const obj = marker.erkanObj;
-      if (!obj) return;
-      obj.visible = phase === "DESK";
-      const showMedia = Boolean(texture) && phase === "DESK";
-      erkanShaderMatRef.current = null;
-      obj.traverse((o) => {
-        const mesh = o as THREE.Mesh;
-        if (!mesh.isMesh) return;
-        const prev = mesh.material;
-        if (prev instanceof THREE.ShaderMaterial) prev.dispose();
-        if (showMedia && texture) {
-          const vigTint = new THREE.Color(
-            deskOrbTint ? COLOR_HEX[deskOrbTint] : "#261a32"
-          );
-          const mat = createErkanProjectionMaterial(texture, {
-            vignetteTint: vigTint,
-            vignetteStrength: 0.72,
-            uvRotation: ERKAN_TEX_ROTATION,
-            mirrorX: ERKAN_MIRROR_X,
-          });
-          erkanShaderMatRef.current = mat;
-          mesh.material = mat;
-        } else {
-          mesh.material = placeholderMat();
-        }
-      });
-    },
-    [marker.erkanObj, phase]
-  );
-
-  useEffect(() => {
-    const mat = erkanShaderMatRef.current;
-    if (!mat || !deskOrbTint) return;
-    const c = new THREE.Color(COLOR_HEX[deskOrbTint]);
-    if (mat.uniforms.uVigTint) mat.uniforms.uVigTint.value.copy(c);
-  }, [deskOrbTint]);
-
-  useEffect(() => {
-    updateProjectionMaterial(null);
-  }, [marker.erkanObj, updateProjectionMaterial]);
-
-  useFrame((_, delta) => {
-    const alpha = 1 - Math.exp(-3.2 * delta);
-    _desiredPos.copy(cameraTarget.current.pos);
-    camera.position.lerp(_desiredPos, alpha);
-    lookCurrent.current.lerp(cameraTarget.current.look, alpha);
-    camera.lookAt(lookCurrent.current);
-    const vt = deskVideoTextureRef.current;
-    if (vt && vt.image instanceof HTMLVideoElement && vt.image.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      vt.needsUpdate = true;
+    if (c && camera instanceof THREE.PerspectiveCamera) {
+      camera.fov = c.fov; camera.near = c.near; camera.far = c.far;
+      camera.updateProjectionMatrix();
     }
-  });
-
-  useEffect(() => {
     const { pos, look } = marker.shelfFrame;
-    camera.position.copy(pos);
-    camera.lookAt(look);
+    camera.position.copy(pos); camera.lookAt(look);
     cameraTarget.current.pos.copy(pos);
     cameraTarget.current.look.copy(look);
     lookCurrent.current.copy(look);
   }, [camera, marker]);
 
-  useEffect(() => {
-    updateProjectionMaterial(playbackTexture);
-  }, [phase, playbackTexture, updateProjectionMaterial]);
+  /* ── Screen material ── */
+  const screenShaderRef = useRef<THREE.ShaderMaterial | null>(null);
 
+  const resetScreenScale = useCallback(() => {
+    if (marker.screenObj) marker.screenObj.scale.copy(marker.screenBaseScale);
+  }, [marker.screenBaseScale, marker.screenObj]);
+
+  const resizeScreenForMedia = useCallback(
+    (mw: number, mh: number) => {
+      const obj = marker.screenObj;
+      if (!obj || !mw || !mh) return;
+      const base = marker.screenBaseScale;
+      const maxH = base.x, maxW = base.z;
+      const ar = mw / mh;
+      let h: number, w: number;
+      if (ar >= 1) { w = maxW; h = w / ar; if (h > maxH) { h = maxH; w = h * ar; } }
+      else { h = maxH; w = h * ar; if (w > maxW) { w = maxW; h = w / ar; } }
+      obj.scale.set(h, base.y, w);
+    },
+    [marker.screenBaseScale, marker.screenObj]
+  );
+
+  const updateScreenMaterial = useCallback(
+    (texture: THREE.Texture | null, opacity = 1) => {
+      const obj = marker.screenObj;
+      if (!obj) return;
+      obj.visible = true;
+      screenShaderRef.current = null;
+      obj.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const prev = mesh.material;
+        if (prev instanceof THREE.ShaderMaterial) prev.dispose();
+        if (texture) {
+          const vigTint = new THREE.Color(deskOrbTint ? COLOR_HEX[deskOrbTint] : "#261a32");
+          const mat = createErkanProjectionMaterial(texture, {
+            vignetteTint: vigTint, vignetteStrength: 0.72,
+            uvRotation: SCREEN_UV_ROTATION, mirrorX: SCREEN_MIRROR_X,
+          });
+          mat.uniforms.uOpacity = { value: opacity };
+          screenShaderRef.current = mat;
+          mesh.material = mat;
+        } else {
+          mesh.material = new THREE.MeshStandardMaterial({
+            color: "#0a0612", emissive: "#1a1028", emissiveIntensity: 0.08,
+            roughness: 0.9, metalness: 0, transparent: true, opacity: 0.95, side: THREE.DoubleSide,
+          });
+        }
+      });
+    },
+    [deskOrbTint, marker.screenObj]
+  );
+
+  useEffect(() => { updateScreenMaterial(null); }, [marker.screenObj, updateScreenMaterial]);
+
+  useEffect(() => {
+    const mat = screenShaderRef.current;
+    if (mat && mat.uniforms.uOpacity) mat.uniforms.uOpacity.value = screenOpacity;
+  }, [screenOpacity]);
+
+  /* ── Camera lerp ── */
+  useFrame((_, delta) => {
+    const alpha = 1 - Math.exp(-4.5 * delta);
+    _desiredPos.copy(cameraTarget.current.pos);
+    camera.position.lerp(_desiredPos, alpha);
+    lookCurrent.current.lerp(cameraTarget.current.look, alpha);
+    camera.lookAt(lookCurrent.current);
+    const vt = deskVideoTextureRef.current;
+    if (vt && vt.image instanceof HTMLVideoElement && vt.image.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
+      vt.needsUpdate = true;
+  });
+
+  /* ── Playback loading ── */
   const disposePlaybackResources = useCallback(() => {
-    const v = deskVideoElRef.current;
-    deskVideoElRef.current = null;
-    deskVideoTextureRef.current = null;
-    if (v) {
-      v.pause();
-      v.removeAttribute("src");
-      v.load();
-    }
-    const t = playbackTexRef.current;
-    playbackTexRef.current = null;
-    if (t) t.dispose();
+    const v = deskVideoElRef.current; deskVideoElRef.current = null; deskVideoTextureRef.current = null;
+    if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
+    const t = playbackTexRef.current; playbackTexRef.current = null; if (t) t.dispose();
     setPlaybackTexture(null);
   }, []);
 
-  const runCameraArc = useCallback(
-    (
-      posEnd: THREE.Vector3,
-      lookEnd: THREE.Vector3,
-      duration: number,
-      options?: { storeForReverse?: boolean; positionMid?: THREE.Vector3 }
-    ) => {
-      cameraArcTweenRef.current?.kill();
-      const posStart = cameraTarget.current.pos.clone();
-      const lookStart = cameraTarget.current.look.clone();
-      const wps = hasCustomWaypoints() ? waypointsToVectors() : [];
-
-      if (wps.length > 0) {
-        const posPts = [posStart, ...wps.map((w) => w.clone()), posEnd.clone()];
-        const lookMid = lookStart.clone().add(lookEnd).multiplyScalar(0.5).lerp(marker.roomCenter, 0.2);
-        const lookPts = [lookStart.clone(), lookMid, lookEnd.clone()];
-        const posCurve = new THREE.CatmullRomCurve3(posPts, false, "catmullrom", 0.5);
-        const lookCurve = new THREE.CatmullRomCurve3(lookPts, false, "catmullrom", 0.5);
-        if (options?.storeForReverse) {
-          lastArcRef.current = {
-            kind: "catmull",
-            posPts: posPts.map((p) => p.clone()),
-            lookPts: lookPts.map((p) => p.clone()),
-            duration,
-          };
-        }
-        cameraArcProgressRef.current.t = 0;
-        cameraArcTweenRef.current = gsap.to(cameraArcProgressRef.current, {
-          t: 1,
-          duration,
-          ease: "sine.inOut",
-          onUpdate: () => {
-            const t = cameraArcProgressRef.current.t;
-            cameraTarget.current.pos.copy(posCurve.getPoint(t));
-            cameraTarget.current.look.copy(lookCurve.getPoint(t));
-          },
-        });
-        return;
-      }
-
-      const posMid = options?.positionMid?.clone() ?? smoothArcMid(posStart, posEnd);
-      const lookMid = lookStart.clone().add(lookEnd).multiplyScalar(0.5);
-      if (options?.storeForReverse) {
-        lastArcRef.current = {
-          kind: "bezier",
-          p0: posStart.clone(),
-          p1: posMid.clone(),
-          p2: posEnd.clone(),
-          l0: lookStart.clone(),
-          l1: lookMid.clone(),
-          l2: lookEnd.clone(),
-          duration,
-        };
-      }
-      cameraArcProgressRef.current.t = 0;
-      cameraArcTweenRef.current = gsap.to(cameraArcProgressRef.current, {
-        t: 1,
-        duration,
-        ease: "sine.inOut",
-        onUpdate: () => {
-          const t = cameraArcProgressRef.current.t;
-          cameraTarget.current.pos.copy(bezierPoint(t, posStart, posMid, posEnd));
-          cameraTarget.current.look.copy(bezierPoint(t, lookStart, lookMid, lookEnd));
-        },
-      });
-    },
-    [marker.roomCenter]
-  );
-
-  const applyPlaybackToPlane = useCallback(
-    (pb: Playback | null, force = false) => {
-      if (!pb || pb.mediaType === "text" || !pb.url) {
-        lastAppliedPlaybackUrl.current = null;
-        disposePlaybackResources();
-        resetErkanScale();
-        updateProjectionMaterial(null);
-        return;
-      }
-      if (!force && pb.url === lastAppliedPlaybackUrl.current) return;
+  const loadPlaybackTexture = useCallback(
+    (pb: Playback) => {
+      if (!pb.url) return;
+      if (pb.url === lastAppliedPlaybackUrl.current) return;
       lastAppliedPlaybackUrl.current = pb.url;
       disposePlaybackResources();
-      resetErkanScale();
-      updateProjectionMaterial(null);
       if (pb.mediaType === "photo") {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
+        const img = new Image(); img.crossOrigin = "anonymous";
         img.onload = () => {
-          const w = img.naturalWidth || 1;
-          const h = img.naturalHeight || 1;
-          const canvas = document.createElement("canvas");
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return;
+          const w = img.naturalWidth || 1, h = img.naturalHeight || 1;
+          const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d"); if (!ctx) return;
           ctx.drawImage(img, 0, 0, w, h);
           const t = new THREE.CanvasTexture(canvas);
           t.colorSpace = THREE.SRGBColorSpace;
-          t.wrapS = THREE.ClampToEdgeWrapping;
-          t.wrapT = THREE.ClampToEdgeWrapping;
+          t.wrapS = THREE.ClampToEdgeWrapping; t.wrapT = THREE.ClampToEdgeWrapping;
           t.needsUpdate = true;
-          resizeErkanForMedia(w, h);
+          resizeScreenForMedia(w, h);
           playbackTexRef.current = t;
           setPlaybackTexture(t);
-          updateProjectionMaterial(t);
-        };
-        img.onerror = () => {
-          disposePlaybackResources();
-          updateProjectionMaterial(null);
         };
         img.src = pb.url;
-        return;
-      }
-      if (pb.mediaType === "video") {
+      } else if (pb.mediaType === "video") {
         const video = document.createElement("video");
         deskVideoElRef.current = video;
-        video.src = pb.url;
-        video.crossOrigin = "anonymous";
-        video.muted = true;
-        video.volume = 0;
-        video.playsInline = true;
-        video.loop = true;
-        video.setAttribute("playsinline", "");
-        video.autoplay = true;
+        video.src = pb.url; video.crossOrigin = "anonymous";
+        video.muted = true; video.volume = 0; video.playsInline = true;
+        video.loop = true; video.setAttribute("playsinline", ""); video.autoplay = true;
         const texture = new THREE.VideoTexture(video);
         texture.colorSpace = THREE.SRGBColorSpace;
-        texture.minFilter = THREE.LinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-        video.addEventListener(
-          "loadedmetadata",
-          () => {
-            const w = video.videoWidth;
-            const h = video.videoHeight;
-            if (w > 0 && h > 0) resizeErkanForMedia(w, h);
-            texture.needsUpdate = true;
-          },
-          { once: true }
-        );
+        texture.minFilter = THREE.LinearFilter; texture.magFilter = THREE.LinearFilter;
+        video.addEventListener("loadedmetadata", () => {
+          if (video.videoWidth > 0 && video.videoHeight > 0)
+            resizeScreenForMedia(video.videoWidth, video.videoHeight);
+          texture.needsUpdate = true;
+        }, { once: true });
         void video.play().catch(() => void 0);
         deskVideoTextureRef.current = texture;
         playbackTexRef.current = texture;
         setPlaybackTexture(texture);
-        updateProjectionMaterial(texture);
       }
     },
-    [disposePlaybackResources, resetErkanScale, resizeErkanForMedia, updateProjectionMaterial]
+    [disposePlaybackResources, resizeScreenForMedia]
   );
 
   useEffect(() => {
-    if (phase !== "DESK") return;
-    applyPlaybackToPlane(useStore.getState().playback);
-  }, [applyPlaybackToPlane, phase]);
+    if (playbackTexture) updateScreenMaterial(playbackTexture, screenOpacity);
+  }, [playbackTexture, updateScreenMaterial]);
 
-  useEffect(() => {
-    const unsub = useStore.subscribe((state) => {
-      if (state.phase === "DESK") applyPlaybackToPlane(state.playback);
-    });
-    return () => unsub();
-  }, [applyPlaybackToPlane]);
-
+  /* ── Helpers ── */
   const slotForIndex = useCallback(
     (idx: number) => marker.slots[idx] ?? marker.slots[marker.slots.length - 1] ?? new THREE.Vector3(4.5, 1.4, 0.75),
     [marker.slots]
   );
 
-  const runCameraArcReverse = useCallback(
-    (durationScale = 1) => {
-      cameraArcTweenRef.current?.kill();
-      const arc = lastArcRef.current;
-      if (!arc) {
-        const { pos, look } = marker.shelfFrame;
-        runCameraArc(pos, look, 0.85 * durationScale);
-        return;
-      }
-      const dur = arc.duration * durationScale;
-      cameraArcProgressRef.current.t = 1;
-      if (arc.kind === "bezier") {
-        const { p0, p1, p2, l0, l1, l2 } = arc;
-        cameraArcTweenRef.current = gsap.to(cameraArcProgressRef.current, {
-          t: 0,
-          duration: dur,
-          ease: "sine.inOut",
-          onUpdate: () => {
-            const t = cameraArcProgressRef.current.t;
-            cameraTarget.current.pos.copy(bezierPoint(t, p0, p1, p2));
-            cameraTarget.current.look.copy(bezierPoint(t, l0, l1, l2));
-          },
-        });
-        return;
-      }
-      const posCurve = new THREE.CatmullRomCurve3(arc.posPts.map((p) => p.clone()), false, "catmullrom", 0.5);
-      const lookCurve = new THREE.CatmullRomCurve3(arc.lookPts.map((p) => p.clone()), false, "catmullrom", 0.5);
-      cameraArcTweenRef.current = gsap.to(cameraArcProgressRef.current, {
-        t: 0,
-        duration: dur,
-        ease: "sine.inOut",
-        onUpdate: () => {
-          const t = cameraArcProgressRef.current.t;
-          cameraTarget.current.pos.copy(posCurve.getPoint(t));
-          cameraTarget.current.look.copy(lookCurve.getPoint(t));
-        },
-      });
-    },
-    [marker.shelfFrame, runCameraArc]
-  );
+  function animateCam(frames: { pos: THREE.Vector3; look: THREE.Vector3 }[], dur: number): gsap.core.Tween {
+    const pts = frames.map((f) => f.pos.clone());
+    const lks = frames.map((f) => f.look.clone());
+    const posCurve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.35);
+    const lookCurve = new THREE.CatmullRomCurve3(lks, false, "catmullrom", 0.35);
+    const prog = { t: 0 };
+    return gsap.to(prog, {
+      t: 1, duration: dur, ease: "sine.inOut",
+      onUpdate: () => {
+        cameraTarget.current.pos.copy(posCurve.getPoint(prog.t));
+        cameraTarget.current.look.copy(lookCurve.getPoint(prog.t));
+      },
+    });
+  }
 
+  function animateOrb(from: THREE.Vector3, waypoints: THREE.Vector3[], dur: number): gsap.core.Tween {
+    const pts = [from.clone(), ...waypoints.map((w) => w.clone())];
+    const curve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.35);
+    const prog = { t: 0 };
+    return gsap.to(prog, {
+      t: 1, duration: dur, ease: "power1.inOut",
+      onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: curve.getPoint(prog.t) } : cur)),
+    });
+  }
+
+  /* ── Go to shelf ── */
   const goShelf = useCallback(() => {
-    setFlying(null);
-    selectMemory(null);
-    setPlayback(null);
-    disposePlaybackResources();
-    resetErkanScale();
-    setPhase("SHELF");
+    setFlying(null); selectMemory(null); setPlayback(null);
+    disposePlaybackResources(); resetScreenScale(); updateScreenMaterial(null);
+    setScreenOpacity(0); setPhase("SHELF");
     const { pos, look } = marker.shelfFrame;
-    runCameraArc(pos, look, 0.85);
-  }, [disposePlaybackResources, resetErkanScale, marker.shelfFrame, selectMemory, setPhase, setPlayback, runCameraArc]);
+    cameraTarget.current.pos.copy(pos);
+    cameraTarget.current.look.copy(look);
+  }, [disposePlaybackResources, resetScreenScale, marker.shelfFrame, selectMemory, setPhase, setPlayback, updateScreenMaterial]);
 
+  /* ── Orb click → zoom ── */
   const onOrbClick = useCallback(
     (memory: Memory, idx: number) => {
       if (phase !== "SHELF") return;
       const slot = slotForIndex(idx);
-      lastSelectedIndex.current = idx;
       selectMemory(memory.id);
       setPhase("ZOOMED");
-      const { pos: shelfPos } = marker.shelfFrame;
-      const zoomPos = shelfPos.clone().lerp(slot, 0.64);
-      runCameraArc(zoomPos, slot.clone(), 0.82);
+      const { pos: sp } = marker.shelfFrame;
+      const zoomPos = sp.clone().lerp(slot, 0.6);
+      cameraTarget.current.pos.copy(zoomPos);
+      cameraTarget.current.look.copy(slot);
     },
-    [marker.shelfFrame, phase, selectMemory, setPhase, slotForIndex, runCameraArc]
+    [marker.shelfFrame, phase, selectMemory, setPhase, slotForIndex]
   );
 
+  /* ══════════════════════════════════════════════════
+     startWatch: shelf → screen, full choreography
+     ══════════════════════════════════════════════════ */
   const startWatch = useCallback(async () => {
     if (phase !== "ZOOMED" || !selectedMemoryId) return;
     const idx = Math.max(0, memories.findIndex((m) => m.id === selectedMemoryId));
     const memory = memories[idx];
-    const from = slotForIndex(idx);
-    const to = marker.stand;
-    lastSelectedIndex.current = idx;
+    const slot = slotForIndex(idx);
 
     setPhase("TRANSITION");
-    setFlying({ memory, pos: from.clone() });
+    setFlying({ memory, pos: slot.clone() });
 
     if (telegramId) {
       setLoadingPlayback(true);
       fetchPlayback(telegramId, selectedMemoryId, initData)
-        .then((pb) => setPlayback(pb))
+        .then((pb) => { setPlayback(pb); loadPlaybackTexture(pb); })
         .finally(() => setLoadingPlayback(false));
     }
 
-    const { pos: pEnd, look: lEnd } = marker.projFrame;
-    const posMid = marker.camTemp?.clone() ?? smoothArcMid(cameraTarget.current.pos, pEnd);
+    const tl = gsap.timeline();
+    timelineRef.current = tl;
 
-    runCameraArc(pEnd, lEnd, 1.05, { storeForReverse: true, positionMid: posMid });
+    const f01 = marker.cam01Frame ?? marker.shelfFrame;
+    const f02 = marker.cam02Frame ?? marker.camMainFrame;
+    const f03 = marker.cam03Frame ?? marker.camMainFrame;
+    const fMain = marker.camMainFrame;
+    const t00 = marker.traj00 ?? slot.clone().add(new THREE.Vector3(0, 0.3, -2));
+    const t01 = marker.traj01 ?? fMain.pos.clone().add(new THREE.Vector3(2, 0.5, 0));
+    const t02 = marker.traj02 ?? t01.clone().add(new THREE.Vector3(0, -1.2, 0));
 
-    const { temp1, temp2, temp3 } = marker;
-    const orbDur = 1.35;
-    const progress = { t: 0 };
-    if (temp1 && temp2 && temp3) {
-      const curve = orbFlightCurve(from, temp1, temp2, temp3, to);
-      gsap.to(progress, {
-        t: 1,
-        duration: orbDur,
-        ease: "power1.inOut",
-        onUpdate: () =>
-          setFlying((cur) => (cur ? { ...cur, pos: curve.getPoint(progress.t) } : cur)),
-        onComplete: () => {
-          setFlying(null);
-          setDeskMemoryId(memory.id);
-          setPhase("DESK");
-        },
+    /* 1) Cam: shelf → Camera_01 → Camera_02, Orb: slot → traj00 → traj01 (0.9s, simultaneously) */
+    tl.add(() => {
+      animateCam([marker.shelfFrame, f01, f02], 0.9);
+      animateOrb(slot, [t00, t01], 0.9);
+    }, 0);
+
+    /* 2) Cam pauses 0.4s at Camera_02; orb descends traj01 → traj02 (0.4s) */
+    tl.add(() => {
+      animateOrb(t01, [t02], 0.4);
+    }, 0.9);
+
+    /* 3) Cam: Camera_02 → Camera_03 → Camera_main (0.9s); memory fades in on screen */
+    const fadeIn = { v: 0 };
+    tl.add(() => {
+      setDeskMemoryId(memory.id);
+      setFlying(null);
+      const tex = playbackTexRef.current;
+      if (tex) updateScreenMaterial(tex, 0);
+      animateCam([f02, f03, fMain], 0.9);
+      gsap.to(fadeIn, {
+        v: 1, duration: 0.9, ease: "power2.in",
+        onUpdate: () => setScreenOpacity(fadeIn.v),
       });
-    } else {
-      const p0 = from.clone();
-      const p2 = to.clone();
-      const p1 = new THREE.Vector3((p0.x + p2.x) / 2 + 0.28, Math.max(p0.y, p2.y) + 0.75, (p0.z + p2.z) / 2 + 0.12);
-      gsap.to(progress, {
-        t: 1,
-        duration: orbDur,
-        ease: "power1.inOut",
-        onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, p0, p1, p2) } : cur)),
-        onComplete: () => {
-          setFlying(null);
-          setDeskMemoryId(memory.id);
-          setPhase("DESK");
-        },
-      });
-    }
+    }, 1.3);
+
+    tl.add(() => {
+      setScreenOpacity(1);
+      setPhase("DESK");
+    }, 2.2);
   }, [
-    initData,
-    marker.camTemp,
-    marker.projFrame,
-    marker.stand,
-    marker.temp1,
-    marker.temp2,
-    marker.temp3,
-    memories,
-    phase,
-    selectedMemoryId,
-    setLoadingPlayback,
-    setPhase,
-    setPlayback,
-    slotForIndex,
-    telegramId,
-    runCameraArc,
+    initData, loadPlaybackTexture, marker, memories, phase,
+    selectedMemoryId, selectMemory, setLoadingPlayback, setPhase,
+    setPlayback, slotForIndex, telegramId, updateScreenMaterial,
   ]);
 
+  /* ══════════════════════════════════════════════════
+     backFromDesk: screen → shelf, reverse choreography
+     ══════════════════════════════════════════════════ */
   const backFromDesk = useCallback(() => {
     if (phase !== "DESK" || !deskMemoryId) return;
     const idx = Math.max(0, memories.findIndex((m) => m.id === deskMemoryId));
     const memory = memories[idx];
-    const from = marker.stand.clone();
-    const to = slotForIndex(idx);
+    const slot = slotForIndex(idx);
+
     setPhase("TRANSITION");
-    setDeskMemoryId(null);
-    setFlying({ memory, pos: from.clone() });
-    disposePlaybackResources();
-    resetErkanScale();
-    updateProjectionMaterial(null);
+    timelineRef.current?.kill();
+    const tl = gsap.timeline();
+    timelineRef.current = tl;
 
-    const camDur = lastArcRef.current?.duration ?? 1.05;
-    const orbDur = 1.25;
-    runCameraArcReverse(1);
+    const f04 = marker.cam04Frame ?? marker.shelfFrame;
+    const t03 = marker.traj03 ?? marker.camMainFrame.pos.clone().add(new THREE.Vector3(2, 0, 0));
+    const t04 = marker.traj04 ?? slot.clone().add(new THREE.Vector3(0, 0.3, -2));
 
-    const { temp1, temp2, temp3 } = marker;
-    const progress = { t: 0 };
-    if (temp1 && temp2 && temp3) {
-      const curve = orbFlightCurve(from, temp3, temp2, temp1, to);
-      gsap.to(progress, {
-        t: 1,
-        duration: orbDur,
-        ease: "power1.inOut",
-        onUpdate: () =>
-          setFlying((cur) => (cur ? { ...cur, pos: curve.getPoint(progress.t) } : cur)),
+    /* 1) Fade out memory (0.5s) */
+    const fadeOut = { v: 1 };
+    tl.add(() => {
+      gsap.to(fadeOut, {
+        v: 0, duration: 0.5, ease: "power2.out",
+        onUpdate: () => setScreenOpacity(fadeOut.v),
       });
-    } else {
-      const p1 = new THREE.Vector3((from.x + to.x) / 2 + 0.2, Math.max(from.y, to.y) + 0.75, (from.z + to.z) / 2 + 0.04);
-      gsap.to(progress, {
-        t: 1,
-        duration: orbDur,
-        ease: "power1.inOut",
-        onUpdate: () => setFlying((cur) => (cur ? { ...cur, pos: bezierPoint(progress.t, from, p1, to) } : cur)),
-      });
-    }
-    gsap.delayedCall(Math.max(camDur, orbDur), goShelf);
+    }, 0);
+
+    /* 2) Once faded, orb appears at traj_03; cam+orb fly home simultaneously (1.0s) */
+    tl.add(() => {
+      setDeskMemoryId(null);
+      disposePlaybackResources(); resetScreenScale(); updateScreenMaterial(null);
+      setScreenOpacity(0);
+      setFlying({ memory, pos: t03.clone() });
+      animateCam([marker.camMainFrame, f04, marker.shelfFrame], 1.0);
+      animateOrb(t03, [t04, slot], 1.0);
+    }, 0.5);
+
+    tl.add(() => {
+      setFlying(null); selectMemory(null); setPlayback(null);
+      setPhase("SHELF");
+    }, 1.55);
   }, [
-    deskMemoryId,
-    disposePlaybackResources,
-    goShelf,
-    resetErkanScale,
-    marker,
-    memories,
-    phase,
-    setPhase,
-    slotForIndex,
-    runCameraArcReverse,
-    updateProjectionMaterial,
+    deskMemoryId, disposePlaybackResources, marker, memories, phase,
+    resetScreenScale, selectMemory, setPhase, setPlayback, slotForIndex, updateScreenMaterial,
   ]);
 
   useEffect(() => {
@@ -790,7 +489,7 @@ function SceneContent() {
     };
   }, [backFromDesk, startWatch]);
 
-  const visibleMemories = memories.slice(0, marker.slots.length || 10);
+  const visibleMemories = memories.slice(0, marker.slots.length || NUM_SLOTS);
 
   return (
     <>
@@ -817,35 +516,25 @@ function SceneContent() {
         );
       })}
 
-      {deskMemoryId &&
-        (() => {
-          const mem = memories.find((m) => m.id === deskMemoryId);
-          if (!mem) return null;
-          return (
-            <MemoryOrb
-              position={[marker.stand.x, marker.stand.y, marker.stand.z]}
-              radius={ORB_RADIUS}
-              color={mem.color}
-              orbIndex={0}
-              previewUrl={mem.previewUrl}
-              isSelected
-              isTransitioning={false}
-            />
-          );
-        })()}
+      {deskMemoryId && (() => {
+        const mem = memories.find((m) => m.id === deskMemoryId);
+        if (!mem) return null;
+        return (
+          <MemoryOrb
+            position={[marker.screenCenter.x, marker.screenCenter.y - 1.2, marker.screenCenter.z]}
+            radius={ORB_RADIUS} color={mem.color} orbIndex={0}
+            previewUrl={mem.previewUrl} isSelected isTransitioning={false}
+          />
+        );
+      })()}
 
       {flying && (
         <MemoryOrb
           position={[flying.pos.x, flying.pos.y, flying.pos.z]}
-          radius={ORB_RADIUS}
-          color={flying.memory.color}
-          orbIndex={0}
-          previewUrl={flying.memory.previewUrl}
-          isSelected
-          isTransitioning
+          radius={ORB_RADIUS} color={flying.memory.color} orbIndex={0}
+          previewUrl={flying.memory.previewUrl} isSelected isTransitioning
         />
       )}
-
     </>
   );
 }
@@ -855,17 +544,13 @@ export function Scene() {
     <Canvas
       camera={{ position: [0, 2, 8], fov: 45, near: 0.01, far: 500 }}
       gl={{
-        antialias: true,
-        powerPreference: "high-performance",
-        toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.0,
+        antialias: true, powerPreference: "high-performance",
+        toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0,
       }}
       dpr={[1, 1.75]}
       style={{ width: "100%", height: "100%" }}
     >
-      <Suspense fallback={null}>
-        <SceneContent />
-      </Suspense>
+      <Suspense fallback={null}><SceneContent /></Suspense>
     </Canvas>
   );
 }

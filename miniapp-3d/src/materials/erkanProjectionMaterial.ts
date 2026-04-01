@@ -23,6 +23,7 @@ uniform sampler2D map;
 uniform float uMirrorX;
 uniform vec3 uVigTint;
 uniform float uVigStr;
+uniform float uOpacity;
 varying vec2 vUv;
 
 void main() {
@@ -39,7 +40,7 @@ void main() {
   vec3 edgeCol = mix(uVigTint * 0.2, uVigTint * (0.35 + 0.4 * lum), 0.72);
   rgb = mix(rgb, edgeCol, vig);
 
-  gl_FragColor = vec4(rgb, 0.996);
+  gl_FragColor = vec4(rgb, 0.996 * uOpacity);
 }
 `;
 
@@ -61,6 +62,7 @@ export function createErkanProjectionMaterial(
       uVigStr: { value: u.vignetteStrength },
       uUvRotation: { value: u.uvRotation },
       uMirrorX: { value: u.mirrorX ? 1.0 : 0.0 },
+      uOpacity: { value: 1.0 },
     },
     vertexShader,
     fragmentShader,
