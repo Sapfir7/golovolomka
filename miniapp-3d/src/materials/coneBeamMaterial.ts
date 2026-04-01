@@ -5,11 +5,18 @@ uniform float uYMin;
 uniform float uInvH;
 varying float vT;
 varying vec3 vLocalPos;
+varying float vViewDot;
 
 void main() {
   vLocalPos = position;
   vT = clamp((position.y - uYMin) * uInvH, 0.0, 1.0);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+
+  vec4 worldPos = modelMatrix * vec4(position, 1.0);
+  vec3 worldNorm = normalize(normalMatrix * normal);
+  vec3 viewDir = normalize(cameraPosition - worldPos.xyz);
+  vViewDot = abs(dot(worldNorm, viewDir));
+
+  gl_Position = projectionMatrix * viewMatrix * worldPos;
 }
 `;
 
@@ -21,6 +28,7 @@ uniform float uTime;
 uniform float uReveal;
 varying float vT;
 varying vec3 vLocalPos;
+varying float vViewDot;
 
 float hash(vec3 p) {
   p = fract(p * vec3(443.897, 441.423, 437.195));
@@ -51,25 +59,24 @@ float fbm(vec3 p) {
 }
 
 void main() {
-  // Reveal from tip toward base with soft leading edge
   float revealEdge = 1.0 - uReveal;
   float revealMask = smoothstep(revealEdge, revealEdge + 0.25, vT);
 
-  // Low-frequency noise for soft, diffused, scattered look
-  vec3 np = vLocalPos * 1.5 + vec3(uTime * 0.08, uTime * 0.12, uTime * 0.06);
+  // Soft low-frequency noise
+  vec3 np = vLocalPos * 1.2 + vec3(uTime * 0.07, uTime * 0.1, uTime * 0.05);
   float n = fbm(np);
+  float wisp = fbm(vLocalPos * 0.5 + vec3(0.0, uTime * 0.03, 0.0));
 
-  // Large wispy structures
-  float wisp = fbm(vLocalPos * 0.7 + vec3(0.0, uTime * 0.04, 0.0));
+  // Volumetric depth: center bright, edges dim (simulates looking through fog)
+  float vol = mix(0.2, 1.0, pow(vViewDot, 0.35));
 
-  // Soft axial fade at both ends
-  float axial = smoothstep(0.0, 0.08, vT) * smoothstep(0.0, 0.08, 1.0 - vT);
+  float axial = smoothstep(0.0, 0.1, vT) * smoothstep(0.0, 0.1, 1.0 - vT);
 
-  float alpha = uStrength * axial * revealMask;
-  alpha *= mix(0.4, 1.0, n);
-  alpha *= mix(0.6, 1.0, wisp);
+  float alpha = uStrength * axial * revealMask * vol;
+  alpha *= mix(0.5, 1.0, n);
+  alpha *= mix(0.65, 1.0, wisp);
 
-  vec3 col = uColor * (0.8 + 0.25 * n);
+  vec3 col = uColor * (0.85 + 0.2 * n);
   gl_FragColor = vec4(col, alpha);
 }
 `;

@@ -103,6 +103,10 @@ void main() {
   float innerGlow = 1.0 - smoothstep(0.0, uTexScale * 0.5, ellipse);
   rgb += uVigTint * innerGlow * 0.08;
 
+  // Film grain for cinematic feel
+  float grain = (hash2(vUv * 800.0 + vec2(uTime * 73.1, uTime * 91.7)) - 0.5) * 0.025;
+  rgb += grain;
+
   float finalAlpha = outerMask * uOpacity;
   if (finalAlpha < 0.004) discard;
   gl_FragColor = vec4(rgb, finalAlpha);

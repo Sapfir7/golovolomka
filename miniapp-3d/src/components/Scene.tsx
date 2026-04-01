@@ -171,7 +171,14 @@ function SceneContent() {
 
     model.traverse((o) => {
       const m = o as THREE.Mesh;
-      if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; }
+      if (m.isMesh) {
+        m.castShadow = false; m.receiveShadow = false;
+        const stdMat = m.material;
+        if (stdMat instanceof THREE.MeshStandardMaterial) {
+          stdMat.roughness = Math.min(stdMat.roughness + 0.12, 1.0);
+          stdMat.envMapIntensity = 0.6;
+        }
+      }
       const light = o as THREE.Light;
       if (!light.isLight) return;
       light.castShadow = false;
@@ -208,23 +215,15 @@ function SceneContent() {
     const conusNode = model.getObjectByName("Conus_light");
     if (conusNode) {
       coneOrigScaleRef.current = conusNode.scale.clone();
-      const meshes: THREE.Mesh[] = [];
       conusNode.traverse((ch) => {
         const mesh = ch as THREE.Mesh;
-        if (mesh.isMesh && mesh.geometry) meshes.push(mesh);
-      });
-      if (meshes.length > 0) {
-        const mesh = meshes[0];
-        coneMeshRef.current = mesh;
-        const mat = createConeBeamMaterial(mesh.geometry, { color: "#fff6e0", strength: 0 });
-        coneMatRef.current = mat;
-        mesh.material = mat;
-        for (const s of [0.75, 0.5, 0.25]) {
-          const inner = new THREE.Mesh(mesh.geometry, mat);
-          inner.scale.set(s, 1, s);
-          mesh.add(inner);
+        if (mesh.isMesh && mesh.geometry) {
+          coneMeshRef.current = mesh;
+          const mat = createConeBeamMaterial(mesh.geometry, { color: "#fff6e0", strength: 0 });
+          coneMatRef.current = mat;
+          mesh.material = mat;
         }
-      }
+      });
     }
   }, [model]);
 
@@ -709,7 +708,7 @@ export function Scene() {
       camera={{ position: [0, 2, 8], fov: 45, near: 0.01, far: 500 }}
       gl={{
         antialias: true, powerPreference: "high-performance",
-        toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0,
+        toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.88,
       }}
       dpr={[1, 1.75]}
       style={{ width: "100%", height: "100%" }}
