@@ -102,8 +102,3 @@ export function updateErkanVignetteUniforms(
   if (u.uVigTint) u.uVigTint.value.copy(vignetteTint);
   if (u.uVigStr) u.uVigStr.value = strength;
 }
-
-export function updateErkanVideoAspect(mat: THREE.ShaderMaterial, texW: number, texH: number): void {
-  const ta = texW / Math.max(1, texH);
-  if (mat.uniforms.uTexAspect) mat.uniforms.uTexAspect.value = ta;
-}

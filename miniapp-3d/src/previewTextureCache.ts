@@ -76,7 +76,7 @@ function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
         bitmap.close();
         const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace;
-        texture.flipY = true;
+        texture.flipY = false;
         texture.wrapS = THREE.ClampToEdgeWrapping;
         texture.wrapT = THREE.ClampToEdgeWrapping;
         texture.minFilter = THREE.LinearMipmapLinearFilter;
