@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Memory, Playback, Room, ScenePhase } from "../types";
+import type { Memory, MemoryColor, Playback, Room, ScenePhase } from "../types";
 
 interface StoreState {
   // ── Auth ────────────────────────────────────────────────────────────────
@@ -52,6 +52,10 @@ interface StoreState {
   /** 0…1: громкость видео в режиме просмотра */
   videoVolume: number;
   setVideoVolume: (v: number) => void;
+
+  /** Цвет шара у проектора — для виньетки в фазе DESK */
+  deskOrbTint: MemoryColor | null;
+  setDeskOrbTint: (c: MemoryColor | null) => void;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -112,4 +116,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
   videoVolume: 1,
   setVideoVolume: (v) => set({ videoVolume: Math.min(1, Math.max(0, v)) }),
+
+  deskOrbTint: null,
+  setDeskOrbTint: (c) => set({ deskOrbTint: c }),
 }));

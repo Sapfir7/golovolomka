@@ -1,25 +1,12 @@
 /**
- * MemoryOrb — статичные шары, приглушённые; превью — квадрат из кэша (центр-кроп).
+ * MemoryOrb — статичные шары; превью из кэша (contain в квадрате, как в чате).
  */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MemoryColor } from "../types";
 import { getPreviewTexture } from "../previewTextureCache";
-
-export const COLOR_HEX: Record<MemoryColor, string> = {
-  yellow: "#d4b84a",
-  blue: "#3a9ec9",
-  red: "#c94444",
-  purple: "#9d62c4",
-};
-
-const EMISSIVE_HEX: Record<MemoryColor, string> = {
-  yellow: "#6a5518",
-  blue: "#1e5a78",
-  red: "#662222",
-  purple: "#4a3266",
-};
+import { COLOR_HEX, EMISSIVE_HEX } from "../memoryPalette";
 
 export interface MemoryOrbProps {
   position: [number, number, number];

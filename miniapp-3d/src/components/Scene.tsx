@@ -146,10 +146,20 @@ function SceneContent() {
   const initData = useStore((s) => s.initData);
   const setPlayback = useStore((s) => s.setPlayback);
   const setLoadingPlayback = useStore((s) => s.setLoadingPlayback);
+  const setDeskOrbTint = useStore((s) => s.setDeskOrbTint);
 
   const [flying, setFlying] = useState<{ memory: Memory; pos: THREE.Vector3 } | null>(null);
   const [deskMemoryId, setDeskMemoryId] = useState<string | null>(null);
   const [playbackTexture, setPlaybackTexture] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    if (phase !== "DESK" || !deskMemoryId) {
+      setDeskOrbTint(null);
+      return;
+    }
+    const mem = memories.find((m) => m.id === deskMemoryId);
+    setDeskOrbTint(mem?.color ?? null);
+  }, [phase, deskMemoryId, memories, setDeskOrbTint]);
   const deskVideoTextureRef = useRef<THREE.VideoTexture | null>(null);
   const deskVideoElRef = useRef<HTMLVideoElement | null>(null);
   const playbackTexRef = useRef<THREE.Texture | null>(null);
@@ -254,32 +264,33 @@ function SceneContent() {
   });
   const lookCurrent = useRef(cameraTarget.current.look.clone());
 
+  /** Ширина кадра → scale.x, высота → scale.z (плоскость Erkan в GLB). */
   const resizeErkanForMedia = useCallback(
     (mediaWidth: number, mediaHeight: number) => {
       const obj = marker.erkanObj;
       if (!obj || !mediaWidth || !mediaHeight) return;
       const base = marker.erkanBaseScale;
-      const maxH = base.x;
-      const maxW = base.z;
+      const maxX = base.x;
+      const maxZ = base.z;
       const ar = mediaWidth / mediaHeight;
-      let h: number;
-      let w: number;
+      let sx: number;
+      let sz: number;
       if (ar >= 1) {
-        w = maxW;
-        h = w / ar;
-        if (h > maxH) {
-          h = maxH;
-          w = h * ar;
+        sx = maxX;
+        sz = sx / ar;
+        if (sz > maxZ) {
+          sz = maxZ;
+          sx = sz * ar;
         }
       } else {
-        h = maxH;
-        w = h * ar;
-        if (w > maxW) {
-          w = maxW;
-          h = w / ar;
+        sz = maxZ;
+        sx = sz * ar;
+        if (sx > maxX) {
+          sx = maxX;
+          sz = sx / ar;
         }
       }
-      obj.scale.set(h, base.y, w);
+      obj.scale.set(sx, base.y, sz);
     },
     [marker.erkanBaseScale, marker.erkanObj]
   );

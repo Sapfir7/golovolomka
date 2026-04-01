@@ -1,8 +1,8 @@
 /**
  * Shared preview texture cache.
  *
- * Loads images through an HTML canvas to guarantee EXIF orientation is applied
- * (Three.js TextureLoader can skip EXIF in some browser/GPU combos).
+ * Как в Telegram-чате: `object-fit: contain` в квадрате (поля), без центр-кропа.
+ * EXIF через `createImageBitmap(..., { imageOrientation: 'from-image' })`.
  *
  * Usage:
  *   - Call `preloadAllPreviews(urls)` early (App bootstrap) to start fetching.
@@ -12,6 +12,27 @@
 import * as THREE from "three";
 
 const cache = new Map<string, Promise<THREE.Texture | null>>();
+
+/** Сторона квадратной текстуры превью (даунскейл с больших фото). */
+const PREVIEW_CANVAS_MAX = 640;
+
+function drawContainOnSquare(
+  ctx: CanvasRenderingContext2D,
+  bitmap: ImageBitmap,
+  side: number,
+  fillStyle: string
+): void {
+  const w0 = bitmap.width;
+  const h0 = bitmap.height;
+  const scale = Math.min(side / w0, side / h0);
+  const dw = Math.max(1, Math.round(w0 * scale));
+  const dh = Math.max(1, Math.round(h0 * scale));
+  const ox = (side - dw) / 2;
+  const oy = (side - dh) / 2;
+  ctx.fillStyle = fillStyle;
+  ctx.fillRect(0, 0, side, side);
+  ctx.drawImage(bitmap, 0, 0, w0, h0, ox, oy, dw, dh);
+}
 
 async function imageToOrientedBitmap(img: HTMLImageElement): Promise<ImageBitmap> {
   try {
@@ -41,9 +62,7 @@ function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
           resolve(null);
           return;
         }
-        const side = Math.min(w, h);
-        const sx = (w - side) / 2;
-        const sy = (h - side) / 2;
+        const side = PREVIEW_CANVAS_MAX;
         const canvas = document.createElement("canvas");
         canvas.width = side;
         canvas.height = side;
@@ -53,7 +72,7 @@ function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
           resolve(null);
           return;
         }
-        ctx.drawImage(bitmap, sx, sy, side, side, 0, 0, side, side);
+        drawContainOnSquare(ctx, bitmap, side, "#0a0810");
         bitmap.close();
         const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace;
