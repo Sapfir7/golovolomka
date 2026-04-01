@@ -1,5 +1,6 @@
 /**
- * MemoryOrb — glass sphere with a flat circular photo disc inside, tinted to the orb color.
+ * MemoryOrb — glass sphere with preview texture mapped onto inner sphere,
+ * color-tinted, with subtle colored glow. Preview stays visible during flight.
  */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
@@ -8,7 +9,7 @@ import type { MemoryColor } from "../types";
 import { getPreviewTexture } from "../previewTextureCache";
 import { COLOR_HEX, EMISSIVE_HEX } from "../memoryPalette";
 
-const discVert = `
+const innerVert = `
 varying vec2 vUv;
 void main() {
   vUv = uv;
@@ -16,25 +17,18 @@ void main() {
 }
 `;
 
-const discFrag = `
+const innerFrag = `
 precision highp float;
 uniform sampler2D map;
 uniform vec3 uTint;
 uniform float uOpacity;
 varying vec2 vUv;
 void main() {
-  vec2 c = vUv - 0.5;
-  float dist = length(c);
-  if (dist > 0.5) discard;
-
   vec4 tex = texture2D(map, vUv);
   vec3 rgb = tex.rgb;
-
   float lum = dot(rgb, vec3(0.299, 0.587, 0.114));
-  vec3 tinted = mix(rgb, uTint * (0.6 + 0.8 * lum), 0.38);
-
-  float edge = smoothstep(0.5, 0.44, dist);
-  gl_FragColor = vec4(tinted, edge * uOpacity);
+  vec3 tinted = mix(rgb, uTint * (0.55 + 0.85 * lum), 0.4);
+  gl_FragColor = vec4(tinted, uOpacity);
 }
 `;
 
@@ -54,7 +48,6 @@ export function MemoryOrb({
   color,
   orbIndex,
   isSelected,
-  isTransitioning,
   previewUrl,
   radius = 0.1125,
   onClick,
@@ -62,7 +55,7 @@ export function MemoryOrb({
   const { gl } = useThree();
   const groupRef = useRef<THREE.Group>(null!);
   const coreRef = useRef<THREE.MeshStandardMaterial>(null!);
-  const discMatRef = useRef<THREE.ShaderMaterial | null>(null);
+  const innerMatRef = useRef<THREE.ShaderMaterial | null>(null);
   const phase = useMemo(() => (orbIndex * 0.73) % (Math.PI * 2), [orbIndex]);
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
 
@@ -84,7 +77,7 @@ export function MemoryOrb({
     texture.needsUpdate = true;
   }, [texture, gl]);
 
-  const discMat = useMemo(() => {
+  const innerMat = useMemo(() => {
     if (!texture) return null;
     const m = new THREE.ShaderMaterial({
       uniforms: {
@@ -92,30 +85,29 @@ export function MemoryOrb({
         uTint: { value: tintColor.clone() },
         uOpacity: { value: 1.0 },
       },
-      vertexShader: discVert,
-      fragmentShader: discFrag,
+      vertexShader: innerVert,
+      fragmentShader: innerFrag,
       transparent: true,
       toneMapped: false,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    discMatRef.current = m;
+    innerMatRef.current = m;
     return m;
   }, [texture, tintColor]);
 
-  useEffect(() => () => { discMat?.dispose(); }, [discMat]);
+  useEffect(() => () => { innerMat?.dispose(); }, [innerMat]);
 
   useFrame(({ clock }) => {
-    if (!groupRef.current || isTransitioning) return;
+    if (!groupRef.current) return;
     const t = clock.getElapsedTime();
-
-    if (discMatRef.current) {
+    if (innerMatRef.current) {
       const base = isSelected ? 0.98 : 0.95;
-      const pulse = isSelected ? Math.sin(t * 1.8 + phase) * 0.02 : Math.sin(t * 0.7 + phase) * 0.015;
-      discMatRef.current.uniforms.uOpacity.value = Math.min(1.0, base + pulse);
+      const pulse = Math.sin(t * 0.7 + phase) * 0.02;
+      innerMatRef.current.uniforms.uOpacity.value = Math.min(1.0, base + pulse);
     } else if (coreRef.current) {
       const base = isSelected ? 0.45 : 0.35;
-      const pulse = isSelected ? Math.sin(t * 1.8 + phase) * 0.06 : Math.sin(t * 0.7 + phase) * 0.03;
+      const pulse = Math.sin(t * 0.7 + phase) * 0.04;
       coreRef.current.emissiveIntensity = base + pulse;
     }
   });
@@ -125,13 +117,14 @@ export function MemoryOrb({
     [onClick]
   );
 
-  const discRadius = radius * 0.85;
+  const innerR = radius * 0.92;
 
   return (
     <group ref={groupRef} position={position} onClick={handleClick}>
-      {texture && discMat ? (
-        <mesh material={discMat}>
-          <planeGeometry args={[discRadius * 2, discRadius * 2]} />
+      {/* Inner sphere with preview texture stretched to fill */}
+      {texture && innerMat ? (
+        <mesh material={innerMat}>
+          <sphereGeometry args={[innerR, 32, 32]} />
         </mesh>
       ) : (
         <mesh>
@@ -150,21 +143,24 @@ export function MemoryOrb({
         </mesh>
       )}
 
-      {/* Outer glass sphere */}
+      {/* Subtle colored glow (small point light) */}
+      <pointLight color={hex} intensity={0.3} distance={0.6} decay={2} />
+
+      {/* Outer glass sphere — matte-ish but still see-through */}
       <mesh>
         <sphereGeometry args={[radius, 28, 28]} />
         <meshPhysicalMaterial
           color={hex}
-          roughness={0.05}
+          roughness={0.25}
           metalness={0.0}
           transparent
-          opacity={0.45}
-          transmission={0.35}
-          thickness={0.5}
-          ior={1.5}
-          envMapIntensity={0.6}
-          clearcoat={0.5}
-          clearcoatRoughness={0.08}
+          opacity={0.32}
+          transmission={0.25}
+          thickness={0.6}
+          ior={1.45}
+          envMapIntensity={0.4}
+          clearcoat={0.3}
+          clearcoatRoughness={0.15}
           depthWrite={false}
           side={THREE.FrontSide}
         />

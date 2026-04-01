@@ -87,7 +87,7 @@ function SceneContent() {
   const [flying, setFlying] = useState<{ memory: Memory; pos: THREE.Vector3 } | null>(null);
   const [deskMemoryId, setDeskMemoryId] = useState<string | null>(null);
   const [playbackTexture, setPlaybackTexture] = useState<THREE.Texture | null>(null);
-  const [screenOpacity, setScreenOpacity] = useState(0);
+  const screenOpacityRef = useRef(0);
 
   const deskVideoTextureRef = useRef<THREE.VideoTexture | null>(null);
   const deskVideoElRef = useRef<HTMLVideoElement | null>(null);
@@ -206,8 +206,8 @@ function SceneContent() {
     [marker.screenBaseScale, marker.screenObj]
   );
 
-  const updateScreenMaterial = useCallback(
-    (texture: THREE.Texture | null, opacity = 1) => {
+  const applyScreenTexture = useCallback(
+    (texture: THREE.Texture, opacity: number) => {
       const obj = marker.screenObj;
       if (!obj) return;
       obj.visible = true;
@@ -217,32 +217,27 @@ function SceneContent() {
         if (!mesh.isMesh) return;
         const prev = mesh.material;
         if (prev instanceof THREE.ShaderMaterial) prev.dispose();
-        if (texture) {
-          const vigTint = new THREE.Color(deskOrbTint ? COLOR_HEX[deskOrbTint] : "#261a32");
-          const mat = createErkanProjectionMaterial(texture, {
-            vignetteTint: vigTint, vignetteStrength: 0.72,
-            uvRotation: SCREEN_UV_ROTATION, mirrorX: SCREEN_MIRROR_X,
-          });
-          mat.uniforms.uOpacity = { value: opacity };
-          screenShaderRef.current = mat;
-          mesh.material = mat;
-        } else {
-          mesh.material = new THREE.MeshStandardMaterial({
-            color: "#0a0612", emissive: "#1a1028", emissiveIntensity: 0.08,
-            roughness: 0.9, metalness: 0, transparent: true, opacity: 0.95, side: THREE.DoubleSide,
-          });
-        }
+        const vigTint = new THREE.Color(deskOrbTint ? COLOR_HEX[deskOrbTint] : "#261a32");
+        const mat = createErkanProjectionMaterial(texture, {
+          vignetteTint: vigTint, vignetteStrength: 0.72,
+          uvRotation: SCREEN_UV_ROTATION, mirrorX: SCREEN_MIRROR_X,
+        });
+        mat.uniforms.uOpacity = { value: opacity };
+        screenShaderRef.current = mat;
+        mesh.material = mat;
       });
     },
     [deskOrbTint, marker.screenObj]
   );
 
-  useEffect(() => { updateScreenMaterial(null); }, [marker.screenObj, updateScreenMaterial]);
+  const hideScreen = useCallback(() => {
+    const obj = marker.screenObj;
+    if (!obj) return;
+    obj.visible = false;
+    screenShaderRef.current = null;
+  }, [marker.screenObj]);
 
-  useEffect(() => {
-    const mat = screenShaderRef.current;
-    if (mat && mat.uniforms.uOpacity) mat.uniforms.uOpacity.value = screenOpacity;
-  }, [screenOpacity]);
+  useEffect(() => { hideScreen(); }, [hideScreen]);
 
   /* ── Camera lerp ── */
   useFrame((_, delta) => {
@@ -251,6 +246,10 @@ function SceneContent() {
     camera.position.lerp(_desiredPos, alpha);
     lookCurrent.current.lerp(cameraTarget.current.look, alpha);
     camera.lookAt(lookCurrent.current);
+
+    const mat = screenShaderRef.current;
+    if (mat && mat.uniforms.uOpacity) mat.uniforms.uOpacity.value = screenOpacityRef.current;
+
     const vt = deskVideoTextureRef.current;
     if (vt && vt.image instanceof HTMLVideoElement && vt.image.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
       vt.needsUpdate = true;
@@ -262,6 +261,7 @@ function SceneContent() {
     if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
     const t = playbackTexRef.current; playbackTexRef.current = null; if (t) t.dispose();
     setPlaybackTexture(null);
+    lastAppliedPlaybackUrl.current = null;
   }, []);
 
   const loadPlaybackTexture = useCallback(
@@ -270,6 +270,7 @@ function SceneContent() {
       if (pb.url === lastAppliedPlaybackUrl.current) return;
       lastAppliedPlaybackUrl.current = pb.url;
       disposePlaybackResources();
+      lastAppliedPlaybackUrl.current = pb.url;
       if (pb.mediaType === "photo") {
         const img = new Image(); img.crossOrigin = "anonymous";
         img.onload = () => {
@@ -310,8 +311,8 @@ function SceneContent() {
   );
 
   useEffect(() => {
-    if (playbackTexture) updateScreenMaterial(playbackTexture, screenOpacity);
-  }, [playbackTexture, updateScreenMaterial]);
+    if (playbackTexture) applyScreenTexture(playbackTexture, screenOpacityRef.current);
+  }, [playbackTexture, applyScreenTexture]);
 
   /* ── Helpers ── */
   const slotForIndex = useCallback(
@@ -347,12 +348,12 @@ function SceneContent() {
   /* ── Go to shelf ── */
   const goShelf = useCallback(() => {
     setFlying(null); selectMemory(null); setPlayback(null);
-    disposePlaybackResources(); resetScreenScale(); updateScreenMaterial(null);
-    setScreenOpacity(0); setPhase("SHELF");
+    disposePlaybackResources(); resetScreenScale(); hideScreen();
+    screenOpacityRef.current = 0; setPhase("SHELF");
     const { pos, look } = marker.shelfFrame;
     cameraTarget.current.pos.copy(pos);
     cameraTarget.current.look.copy(look);
-  }, [disposePlaybackResources, resetScreenScale, marker.shelfFrame, selectMemory, setPhase, setPlayback, updateScreenMaterial]);
+  }, [disposePlaybackResources, resetScreenScale, hideScreen, marker.shelfFrame, selectMemory, setPhase, setPlayback]);
 
   /* ── Orb click → zoom ── */
   const onOrbClick = useCallback(
@@ -380,6 +381,8 @@ function SceneContent() {
 
     setPhase("TRANSITION");
     setFlying({ memory, pos: slot.clone() });
+    screenOpacityRef.current = 0;
+    hideScreen();
 
     if (telegramId) {
       setLoadingPlayback(true);
@@ -399,39 +402,43 @@ function SceneContent() {
     const t01 = marker.traj01 ?? fMain.pos.clone().add(new THREE.Vector3(2, 0.5, 0));
     const t02 = marker.traj02 ?? t01.clone().add(new THREE.Vector3(0, -1.2, 0));
 
-    /* 1) Cam: shelf → Camera_01 → Camera_02, Orb: slot → traj00 → traj01 (1.8s, simultaneously) */
+    /* 1) Cam: shelf → Camera_01 → Camera_02, Orb: slot → traj00 → traj01 (1.8s) */
     tl.add(() => {
       animateCam([marker.shelfFrame, f01, f02], 1.8);
       animateOrb(slot, [t00, t01], 1.8);
     }, 0);
 
-    /* 2) Cam pauses 0.6s at Camera_02; orb descends traj01 → traj02 (0.7s) */
+    /* 2) Cam pauses; orb descends traj01 → traj02 (0.7s) */
     tl.add(() => {
       animateOrb(t01, [t02], 0.7);
     }, 1.8);
 
-    /* 3) Cam: Camera_02 → Camera_03 → Camera_main (1.6s); memory fades in on screen */
+    /* 3) Cam: Camera_02 → Camera_03 → Camera_main (1.6s); memory fades in.
+       Orb stays at traj02 (flying state persists). */
     const fadeIn = { v: 0 };
     tl.add(() => {
-      setDeskMemoryId(memory.id);
-      setFlying(null);
       const tex = playbackTexRef.current;
-      if (tex) updateScreenMaterial(tex, 0);
+      if (tex) {
+        applyScreenTexture(tex, 0);
+      }
       animateCam([f02, f03, fMain], 1.6);
       gsap.to(fadeIn, {
         v: 1, duration: 1.6, ease: "power2.in",
-        onUpdate: () => setScreenOpacity(fadeIn.v),
+        onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
       });
     }, 2.5);
 
+    /* 4) Complete: hide flying orb, enter DESK */
     tl.add(() => {
-      setScreenOpacity(1);
+      screenOpacityRef.current = 1;
+      setFlying(null);
+      setDeskMemoryId(memory.id);
       setPhase("DESK");
     }, 4.1);
   }, [
-    initData, loadPlaybackTexture, marker, memories, phase,
-    selectedMemoryId, selectMemory, setLoadingPlayback, setPhase,
-    setPlayback, slotForIndex, telegramId, updateScreenMaterial,
+    applyScreenTexture, hideScreen, initData, loadPlaybackTexture,
+    marker, memories, phase, selectedMemoryId, setLoadingPlayback,
+    setPhase, setPlayback, slotForIndex, telegramId,
   ]);
 
   /* ══════════════════════════════════════════════════
@@ -457,15 +464,15 @@ function SceneContent() {
     tl.add(() => {
       gsap.to(fadeOut, {
         v: 0, duration: 0.8, ease: "power2.out",
-        onUpdate: () => setScreenOpacity(fadeOut.v),
+        onUpdate: () => { screenOpacityRef.current = fadeOut.v; },
       });
     }, 0);
 
-    /* 2) Once faded, orb appears at traj_03; cam+orb fly home simultaneously (1.8s) */
+    /* 2) Once faded: hide screen, orb at traj_03, cam+orb fly home (1.8s) */
     tl.add(() => {
       setDeskMemoryId(null);
-      disposePlaybackResources(); resetScreenScale(); updateScreenMaterial(null);
-      setScreenOpacity(0);
+      disposePlaybackResources(); resetScreenScale(); hideScreen();
+      screenOpacityRef.current = 0;
       setFlying({ memory, pos: t03.clone() });
       animateCam([marker.camMainFrame, f04, marker.shelfFrame], 1.8);
       animateOrb(t03, [t04, slot], 1.8);
@@ -476,8 +483,8 @@ function SceneContent() {
       setPhase("SHELF");
     }, 2.7);
   }, [
-    deskMemoryId, disposePlaybackResources, marker, memories, phase,
-    resetScreenScale, selectMemory, setPhase, setPlayback, slotForIndex, updateScreenMaterial,
+    deskMemoryId, disposePlaybackResources, hideScreen, marker, memories, phase,
+    resetScreenScale, selectMemory, setPhase, setPlayback, slotForIndex,
   ]);
 
   useEffect(() => {
