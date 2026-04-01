@@ -62,17 +62,18 @@ void main() {
   float revealEdge = 1.0 - uReveal;
   float revealMask = smoothstep(revealEdge, revealEdge + 0.25, vT);
 
-  // Soft low-frequency noise
   vec3 np = vLocalPos * 1.2 + vec3(uTime * 0.07, uTime * 0.1, uTime * 0.05);
   float n = fbm(np);
   float wisp = fbm(vLocalPos * 0.5 + vec3(0.0, uTime * 0.03, 0.0));
 
-  // Volumetric depth: center bright, edges dim (simulates looking through fog)
-  float vol = mix(0.2, 1.0, pow(vViewDot, 0.35));
+  // Break up cone silhouette with noise: holes where noise is low
+  float edgeBreak = fbm(vLocalPos * 2.5 + vec3(uTime * 0.12, 0.0, uTime * 0.08));
+  float breakMask = smoothstep(0.15, 0.5, edgeBreak);
 
+  float vol = mix(0.2, 1.0, pow(vViewDot, 0.35));
   float axial = smoothstep(0.0, 0.1, vT) * smoothstep(0.0, 0.1, 1.0 - vT);
 
-  float alpha = uStrength * axial * revealMask * vol;
+  float alpha = uStrength * axial * revealMask * vol * breakMask;
   alpha *= mix(0.5, 1.0, n);
   alpha *= mix(0.65, 1.0, wisp);
 

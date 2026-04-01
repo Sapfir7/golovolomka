@@ -271,7 +271,8 @@ function SceneContent() {
     const base = marker.screenBaseScale;
     const ratioX = obj.scale.x / base.x;
     const ratioZ = obj.scale.z / base.z;
-    conusNode.scale.set(orig.x * ratioX, orig.y, orig.z * ratioZ);
+    const shrink = 0.82;
+    conusNode.scale.set(orig.x * ratioX * shrink, orig.y, orig.z * ratioZ * shrink);
   }, [model, marker.screenObj, marker.screenBaseScale]);
 
   const aimSpotAtScreen = useCallback(() => {
@@ -569,7 +570,7 @@ function SceneContent() {
       if (tex) applyScreenTexture(tex, 0);
       const fadeIn = { v: 0 };
       gsap.to(fadeIn, {
-        v: 1, duration: 2.0, ease: "power1.inOut",
+        v: 1, duration: 0.7, ease: "power2.out",
         onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
       });
     }, 2.5);

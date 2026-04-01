@@ -1,6 +1,7 @@
 /**
  * MemoryOrb — glass sphere with preview texture mapped onto inner sphere,
- * color-tinted, with subtle colored glow. Preview stays visible during flight.
+ * color-tinted, with view-dependent vignette that fades toward sphere edges.
+ * Preview stays visible during flight.
  */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
@@ -11,9 +12,14 @@ import { COLOR_HEX, EMISSIVE_HEX } from "../memoryPalette";
 
 const innerVert = `
 varying vec2 vUv;
+varying float vFacing;
 void main() {
   vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 worldPos = modelMatrix * vec4(position, 1.0);
+  vec3 worldNorm = normalize(normalMatrix * normal);
+  vec3 viewDir = normalize(cameraPosition - worldPos.xyz);
+  vFacing = max(0.0, dot(worldNorm, viewDir));
+  gl_Position = projectionMatrix * viewMatrix * worldPos;
 }
 `;
 
@@ -23,12 +29,17 @@ uniform sampler2D map;
 uniform vec3 uTint;
 uniform float uOpacity;
 varying vec2 vUv;
+varying float vFacing;
 void main() {
   vec4 tex = texture2D(map, vUv);
   vec3 rgb = tex.rgb;
   float lum = dot(rgb, vec3(0.299, 0.587, 0.114));
   vec3 tinted = mix(rgb, uTint * (0.55 + 0.85 * lum), 0.4);
-  gl_FragColor = vec4(tinted, uOpacity);
+
+  float vignette = smoothstep(0.0, 0.55, vFacing);
+  float alpha = uOpacity * vignette * tex.a;
+  if (alpha < 0.01) discard;
+  gl_FragColor = vec4(tinted, alpha);
 }
 `;
 
@@ -90,7 +101,7 @@ export function MemoryOrb({
       transparent: true,
       toneMapped: false,
       depthWrite: false,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
     });
     innerMatRef.current = m;
     return m;
@@ -117,11 +128,11 @@ export function MemoryOrb({
     [onClick]
   );
 
-  const innerR = radius * 0.92;
+  const innerR = radius * 0.99;
 
   return (
     <group ref={groupRef} position={position} onClick={handleClick}>
-      {/* Inner sphere with preview texture stretched to fill */}
+      {/* Inner sphere with preview texture, view-dependent vignette */}
       {texture && innerMat ? (
         <mesh material={innerMat}>
           <sphereGeometry args={[innerR, 32, 32]} />
@@ -143,10 +154,10 @@ export function MemoryOrb({
         </mesh>
       )}
 
-      {/* Subtle colored glow (small point light) */}
+      {/* Subtle colored glow */}
       <pointLight color={hex} intensity={0.3} distance={0.6} decay={2} />
 
-      {/* Outer glass sphere — matte-ish but still see-through */}
+      {/* Outer glass sphere */}
       <mesh>
         <sphereGeometry args={[radius, 28, 28]} />
         <meshPhysicalMaterial
