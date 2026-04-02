@@ -21,7 +21,7 @@ const SCREEN_MIRROR_X = true;
 
 const SPOT_BASE_INTENSITY = 12;
 const LIGHT_DIM_FACTOR = 0.35;
-const VIGNETTE_EXPAND = 2.2;
+const VIGNETTE_EXPAND = 1.8;
 
 const _fwd = new THREE.Vector3(0, 0, -1);
 const _quat = new THREE.Quaternion();
@@ -73,6 +73,32 @@ function worldPos(model: THREE.Object3D, name: string): THREE.Vector3 | null {
 
 const _desiredPos = new THREE.Vector3();
 
+function smoothConeNormals(geometry: THREE.BufferGeometry): void {
+  const posAttr = geometry.getAttribute("position") as THREE.BufferAttribute;
+  const normAttr = geometry.getAttribute("normal") as THREE.BufferAttribute;
+  if (!posAttr || !normAttr) return;
+  const tol = 1e-4;
+  const buckets = new Map<string, number[]>();
+  for (let i = 0; i < posAttr.count; i++) {
+    const key = `${Math.round(posAttr.getX(i) / tol)},${Math.round(posAttr.getY(i) / tol)},${Math.round(posAttr.getZ(i) / tol)}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(i);
+  }
+  const tmp = new THREE.Vector3();
+  for (const indices of buckets.values()) {
+    tmp.set(0, 0, 0);
+    for (const i of indices) {
+      tmp.x += normAttr.getX(i);
+      tmp.y += normAttr.getY(i);
+      tmp.z += normAttr.getZ(i);
+    }
+    if (tmp.lengthSq() < 1e-8) continue;
+    tmp.normalize();
+    for (const i of indices) normAttr.setXYZ(i, tmp.x, tmp.y, tmp.z);
+  }
+  normAttr.needsUpdate = true;
+}
+
 function SceneContent() {
   const { camera } = useThree();
   const { scene } = useGLTF(SCENE_MODEL_URL);
@@ -108,6 +134,8 @@ function SceneContent() {
   const coneMatRef = useRef<THREE.ShaderMaterial | null>(null);
   const coneOrigScaleRef = useRef<THREE.Vector3 | null>(null);
   const beamStrengthRef = useRef(0);
+  const beamActiveRef = useRef(false);
+  const screenFadeStartedRef = useRef(false);
   const spotScreenRef = useRef<THREE.SpotLight | null>(null);
   const lightDimRef = useRef(1);
   const sceneLightsRef = useRef<{ light: THREE.Light; base: number }[]>([]);
@@ -220,6 +248,7 @@ function SceneContent() {
         const mesh = ch as THREE.Mesh;
         if (mesh.isMesh && mesh.geometry) {
           coneMeshRef.current = mesh;
+          smoothConeNormals(mesh.geometry);
           mesh.geometry.computeBoundingBox();
           const box = mesh.geometry.boundingBox!;
           const tipLocal = new THREE.Vector3(
@@ -227,11 +256,18 @@ function SceneContent() {
             box.max.y,
             (box.min.z + box.max.z) / 2,
           );
+          const baseLocal = new THREE.Vector3(
+            (box.min.x + box.max.x) / 2,
+            box.min.y,
+            (box.min.z + box.max.z) / 2,
+          );
           mesh.updateWorldMatrix(true, false);
           const tipWorld = tipLocal.clone().applyMatrix4(mesh.matrixWorld);
+          const baseWorld = baseLocal.clone().applyMatrix4(mesh.matrixWorld);
+          const atten = Math.max(tipWorld.distanceTo(baseWorld) * 1.3, 3.0);
           const mat = createConeBeamMaterial(mesh.geometry, {
             color: "#fff6e0", strength: 0, spotPos: tipWorld,
-            attenuation: 5.0, anglePower: 4.0,
+            attenuation: atten, anglePower: 2.0,
           });
           coneMatRef.current = mat;
           mesh.material = mat;
@@ -447,7 +483,17 @@ function SceneContent() {
   );
 
   useEffect(() => {
-    if (playbackTexture) applyScreenTexture(playbackTexture, screenOpacityRef.current);
+    if (!playbackTexture) return;
+    applyScreenTexture(playbackTexture, 0);
+    if (beamActiveRef.current && !screenFadeStartedRef.current) {
+      screenFadeStartedRef.current = true;
+      screenOpacityRef.current = 0;
+      const fo = { v: 0 };
+      gsap.to(fo, {
+        v: 1, duration: 0.8, ease: "power2.out",
+        onUpdate: () => { screenOpacityRef.current = fo.v; },
+      });
+    }
   }, [playbackTexture, applyScreenTexture]);
 
   /* ── Helpers ── */
@@ -486,6 +532,7 @@ function SceneContent() {
     setFlying(null); selectMemory(null); setPlayback(null);
     disposePlaybackResources(); resetScreenScale(); hideScreen(); hideCone();
     screenOpacityRef.current = 0; beamStrengthRef.current = 0; lightDimRef.current = 1;
+    beamActiveRef.current = false; screenFadeStartedRef.current = false;
     setPhase("SHELF");
     const { pos, look } = marker.shelfFrame;
     cameraTarget.current.pos.copy(pos);
@@ -521,6 +568,8 @@ function SceneContent() {
     screenOpacityRef.current = 0;
     beamStrengthRef.current = 0;
     lightDimRef.current = 1;
+    beamActiveRef.current = false;
+    screenFadeStartedRef.current = false;
     hideScreen();
     hideCone();
 
@@ -553,7 +602,7 @@ function SceneContent() {
       animateOrb(t01, [t02], 0.7);
     }, 1.8);
 
-    // 3) 0.4s pause: beam reveals tip→base, memory fades in, lights dim
+    // 3) 0.4s pause: beam reveals tip→base, lights dim, screen fade driven by useEffect
     const beamIn = { v: 0 };
     const revealIn = { v: 0 };
     const dimmer = { v: 1 };
@@ -561,6 +610,7 @@ function SceneContent() {
       const vigTint = new THREE.Color(COLOR_HEX[memory.color] ?? "#261a32");
       adaptConeToScreen();
       showCone(vigTint);
+      beamActiveRef.current = true;
 
       gsap.to(beamIn, {
         v: 0.45, duration: 0.6, ease: "power2.out",
@@ -579,14 +629,19 @@ function SceneContent() {
         onUpdate: () => { lightDimRef.current = dimmer.v; },
       });
 
-      const tex = playbackTexRef.current;
-      if (tex) applyScreenTexture(tex, 0);
       aimSpotAtScreen();
-      const fadeIn = { v: 0 };
-      gsap.to(fadeIn, {
-        v: 1, duration: 0.6, ease: "power2.out",
-        onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
-      });
+
+      const tex = playbackTexRef.current;
+      if (tex && !screenFadeStartedRef.current) {
+        applyScreenTexture(tex, 0);
+        screenFadeStartedRef.current = true;
+        screenOpacityRef.current = 0;
+        const fadeIn = { v: 0 };
+        gsap.to(fadeIn, {
+          v: 1, duration: 0.8, ease: "power2.out",
+          onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
+        });
+      }
     }, 2.5);
 
     // 4) Camera: Cam02 → Cam03 → CamMain (1.6s, starts after 0.4s pause)

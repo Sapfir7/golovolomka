@@ -76,32 +76,32 @@ void main() {
   float lum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
   vec3 tinted = mix(texel.rgb, uVigTint * (0.5 + lum * 0.9), uColorMix);
 
-  // Vignette color — rich and saturated
+  // Vignette color — subdued, less saturated
   float vigNoise = fbm2(vUv * 4.0 + vec2(uTime * 0.05, uTime * 0.03));
-  vec3 vigCol = uVigTint * (0.2 + 0.4 * vigNoise);
+  vec3 vigCol = uVigTint * (0.1 + 0.16 * vigNoise);
 
   // Blend: inside oval = tinted memory, outside = vignette color
   vec3 rgb = mix(vigCol, tinted, memMask);
 
-  // Thick bloom ring at memory boundary
+  // Subtle bloom ring at memory boundary
   float bloomR = smoothstep(0.5, 0.8, memR) * (1.0 - smoothstep(0.8, 1.5, memR));
-  rgb += uVigTint * bloomR * uVigStr * 0.5;
+  rgb += uVigTint * bloomR * uVigStr * 0.2;
 
-  // Outer dissolution with noisy boundary
+  // Outer dissolution — tighter, less noisy
   float outerNoise = fbm2(vUv * 6.0 + vec2(uTime * 0.08, uTime * 0.05));
-  float outerEdge = 0.80 + outerNoise * 0.22;
-  float outerMask = 1.0 - smoothstep(outerEdge - 0.2, outerEdge + 0.06, ellipse);
+  float outerEdge = 0.72 + outerNoise * 0.14;
+  float outerMask = 1.0 - smoothstep(outerEdge - 0.18, outerEdge + 0.06, ellipse);
 
-  // Wispy fibers at outer boundary
-  float fiberZone = smoothstep(0.45, 0.7, ellipse) *
+  // Subtle fibers at outer boundary
+  float fiberZone = smoothstep(0.45, 0.65, ellipse) *
                     (1.0 - smoothstep(outerEdge - 0.05, outerEdge + 0.1, ellipse));
   float fibers = fbm2(vUv * 18.0 + vec2(uTime * 0.1, -uTime * 0.07));
-  outerMask += fiberZone * fibers * 0.25;
+  outerMask += fiberZone * fibers * 0.1;
   outerMask = clamp(outerMask, 0.0, 1.0);
 
   // Subtle warm inner glow
   float innerGlow = 1.0 - smoothstep(0.0, uTexScale * 0.5, ellipse);
-  rgb += uVigTint * innerGlow * 0.08;
+  rgb += uVigTint * innerGlow * 0.04;
 
   // Film grain for cinematic feel
   float grain = (hash2(vUv * 800.0 + vec2(uTime * 73.1, uTime * 91.7)) - 0.5) * 0.025;
