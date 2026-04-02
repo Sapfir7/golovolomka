@@ -27,6 +27,7 @@ uniform float uOpacity;
 uniform float uColorMix;
 uniform float uTime;
 uniform float uTexScale;
+uniform float uSphereCurve;
 varying vec2 vUv;
 
 float hash2(vec2 p) {
@@ -59,9 +60,17 @@ void main() {
   vec2 st = vUv;
   if (uMirrorX > 0.5) st.x = 1.0 - st.x;
 
-  // Always sample texture with clamping — never a hard rectangular boundary
+  // Always sample texture with clamping — mild barrel = photo on large sphere
   vec2 texUv = clamp((st - 0.5) / uTexScale + 0.5, 0.0, 1.0);
+  vec2 dS = texUv - 0.5;
+  float sr2 = dot(dS, dS);
+  texUv = clamp(0.5 + dS * (1.0 + uSphereCurve * sr2), 0.0, 1.0);
   vec4 texel = texture2D(map, texUv);
+  vec4 t1 = texture2D(map, clamp(texUv + vec2(0.0012, 0.0), 0.0, 1.0));
+  vec4 t2 = texture2D(map, clamp(texUv - vec2(0.0012, 0.0), 0.0, 1.0));
+  vec4 t3 = texture2D(map, clamp(texUv + vec2(0.0, 0.0012), 0.0, 1.0));
+  vec4 t4 = texture2D(map, clamp(texUv - vec2(0.0, 0.0012), 0.0, 1.0));
+  texel = mix(texel, (texel + t1 + t2 + t3 + t4) * 0.2, 0.35);
 
   // Elliptical distance from center (full screen UV space)
   vec2 q = (vUv - 0.5) * 2.0;
@@ -76,9 +85,10 @@ void main() {
   float lum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
   vec3 tinted = mix(texel.rgb, uVigTint * (0.5 + lum * 0.9), uColorMix);
 
-  // Vignette color — subdued, less saturated
+  // Vignette — lift toward warm highlight, more cinematic (less swamp)
+  vec3 vigBase = mix(uVigTint, vec3(1.0, 0.97, 0.94), 0.14);
   float vigNoise = fbm2(vUv * 4.0 + vec2(uTime * 0.05, uTime * 0.03));
-  vec3 vigCol = uVigTint * (0.1 + 0.16 * vigNoise);
+  vec3 vigCol = vigBase * (0.14 + 0.2 * vigNoise);
 
   // Blend: inside oval = tinted memory, outside = vignette color
   vec3 rgb = mix(vigCol, tinted, memMask);
@@ -120,6 +130,7 @@ export interface ErkanProjectionUniforms {
   mirrorX: boolean;
   colorMix?: number;
   texScale?: number;
+  sphereCurve?: number;
 }
 
 export function createErkanProjectionMaterial(
@@ -136,6 +147,7 @@ export function createErkanProjectionMaterial(
       uOpacity: { value: 1.0 },
       uColorMix: { value: u.colorMix ?? 0.3 },
       uTexScale: { value: u.texScale ?? 1.0 },
+      uSphereCurve: { value: u.sphereCurve ?? 0.07 },
       uTime: { value: 0 },
     },
     vertexShader,

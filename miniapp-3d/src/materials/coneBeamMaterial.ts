@@ -112,13 +112,22 @@ void main() {
   vec3 np = vLocalPos * 0.6 + vec3(uTime * 0.04, uTime * 0.06, uTime * 0.03);
   float n3 = fbm3(np);
 
+  // Wall silhouette noise (azimuth + height) — breaks cone facets into light
+  float az = atan(vLocalPos.z, vLocalPos.x);
+  float radXZ = length(vLocalPos.xz) + 1e-4;
+  vec2 wallUv = vec2(az * 2.8 + uTime * 0.05, vT * 9.0 + n3 * 0.4);
+  float wallGrain = fbm2(wallUv);
+  float wallFine = fbm2(vec2(az * 9.0 - uTime * 0.12, radXZ * 3.5 + vT * 5.0));
+  float wallBreak = mix(0.4, 1.0, wallGrain) * mix(0.55, 1.0, wallFine);
+  intensity *= wallBreak;
+
   vec2 ndc = vClipPos.xy / max(vClipPos.w, 1e-4);
   vec2 screenUv = ndc * 0.5 + 0.5;
   vec2 grainUv = screenUv * 900.0 + vec2(uTime * 0.07, uTime * 0.05);
   float n2 = fbm2(grainUv * 0.06 + vec2(uTime * 0.04, -uTime * 0.03));
   float n2fine = fbm2(grainUv * 0.18 + vec2(uTime * 0.1, uTime * 0.08));
 
-  float edgeBreak = mix(0.55, 1.0, n2) * mix(0.7, 1.0, n2fine);
+  float edgeBreak = mix(0.45, 1.0, n2) * mix(0.6, 1.0, n2fine);
   intensity *= edgeBreak;
 
   float alpha = uStrength * intensity * revealMask;

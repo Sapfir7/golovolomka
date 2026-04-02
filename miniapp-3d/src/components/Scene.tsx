@@ -11,6 +11,7 @@ import { COLOR_HEX } from "../memoryPalette";
 import { createErkanProjectionMaterial } from "../materials/erkanProjectionMaterial";
 import { createConeBeamMaterial } from "../materials/coneBeamMaterial";
 import { fetchPlayback } from "../api/client";
+import { BLOOM, EFFECT_COMPOSER } from "../postprocessingConfig";
 
 const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik2.glb`;
 const ORB_RADIUS = 0.1125;
@@ -23,11 +24,33 @@ const SPOT_BASE_INTENSITY = 12;
 const LIGHT_DIM_FACTOR = 0.35;
 const VIGNETTE_EXPAND = 1.8;
 
-/** Fade-out (back): 0.8s power2.out — fade-in uses symmetric curve + slightly longer build */
+/** Fade-out (back): 0.8s power2.out — fade-in mirrors (gentle in + out) */
 const SCREEN_FADE_OUT_SEC = 0.8;
 const SCREEN_FADE_OUT_EASE = "power2.out";
-const SCREEN_FADE_IN_SEC = 1.05;
+const SCREEN_FADE_IN_SEC = 0.8;
 const SCREEN_FADE_IN_EASE = "power2.inOut";
+
+/** Shelf→Cam02 faster, longer hold on Cam02 before beam */
+const CAM_SHELF_TO_02_SEC = 1.45;
+const ORB_DROP_DURATION = 0.7;
+const PAUSE_AT_CAM02_AFTER_DROP_SEC = 0.55;
+const T_ORB_DROP_START = CAM_SHELF_TO_02_SEC;
+const T_ORB_LAND = T_ORB_DROP_START + ORB_DROP_DURATION;
+const T_BEAM_START = T_ORB_LAND + PAUSE_AT_CAM02_AFTER_DROP_SEC;
+const CAM_FLY_AFTER_BEAM_DELAY = 0.4;
+const T_CAM_TO_MAIN_START = T_BEAM_START + CAM_FLY_AFTER_BEAM_DELAY;
+const CAM_TO_MAIN_DURATION = 1.6;
+const T_DESK_ENTER = T_CAM_TO_MAIN_START + CAM_TO_MAIN_DURATION;
+
+function liftVignetteTint(hex: string): THREE.Color {
+  const c = new THREE.Color(hex);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  hsl.s = Math.min(0.92, hsl.s * 1.22);
+  hsl.l = Math.min(0.58, hsl.l + 0.07);
+  c.setHSL(hsl.h, hsl.s, hsl.l);
+  return c;
+}
 
 const _fwd = new THREE.Vector3(0, 0, -1);
 const _quat = new THREE.Quaternion();
@@ -184,6 +207,8 @@ function SceneContent() {
   const beamStrengthRef = useRef(0);
   const beamActiveRef = useRef(false);
   const screenFadeStartedRef = useRef(false);
+  const screenVigTintRef = useRef<THREE.Color | null>(null);
+  const screenFadeTweenRef = useRef<gsap.core.Tween | null>(null);
   const spotScreenRef = useRef<THREE.SpotLight | null>(null);
   const lightDimRef = useRef(1);
   const sceneLightsRef = useRef<{ light: THREE.Light; base: number }[]>([]);
@@ -405,12 +430,16 @@ function SceneContent() {
         if (!mesh.isMesh) return;
         const prev = mesh.material;
         if (prev instanceof THREE.ShaderMaterial) prev.dispose();
-        const vigTint = new THREE.Color(deskOrbTint ? COLOR_HEX[deskOrbTint] : "#261a32");
+        const baseHex = screenVigTintRef.current
+          ? `#${screenVigTintRef.current.getHexString()}`
+          : (deskOrbTint ? COLOR_HEX[deskOrbTint] : "#2a1f38");
+        const vigTint = liftVignetteTint(baseHex);
         const mat = createErkanProjectionMaterial(texture, {
           vignetteTint: vigTint, vignetteStrength: 0.72,
           uvRotation: SCREEN_UV_ROTATION, mirrorX: SCREEN_MIRROR_X,
           colorMix: 0.4,
           texScale: 1 / VIGNETTE_EXPAND,
+          sphereCurve: 0.075,
         });
         mat.uniforms.uOpacity = { value: opacity };
         screenShaderRef.current = mat;
@@ -540,16 +569,8 @@ function SceneContent() {
 
   useEffect(() => {
     if (!playbackTexture) return;
-    applyScreenTexture(playbackTexture, 0);
-    if (beamActiveRef.current && !screenFadeStartedRef.current) {
-      screenFadeStartedRef.current = true;
-      screenOpacityRef.current = 0;
-      const fo = { v: 0 };
-      gsap.to(fo, {
-        v: 1, duration: SCREEN_FADE_IN_SEC, ease: SCREEN_FADE_IN_EASE,
-        onUpdate: () => { screenOpacityRef.current = fo.v; },
-      });
-    }
+    if (!beamActiveRef.current) return;
+    applyScreenTexture(playbackTexture, screenOpacityRef.current);
   }, [playbackTexture, applyScreenTexture]);
 
   /* ── Helpers ── */
@@ -588,7 +609,11 @@ function SceneContent() {
     setFlying(null); selectMemory(null); setPlayback(null);
     disposePlaybackResources(); resetScreenScale(); hideScreen(); hideCone();
     screenOpacityRef.current = 0; beamStrengthRef.current = 0; lightDimRef.current = 1;
-    beamActiveRef.current = false; screenFadeStartedRef.current = false;
+    beamActiveRef.current = false;
+    screenFadeStartedRef.current = false;
+    screenVigTintRef.current = null;
+    screenFadeTweenRef.current?.kill();
+    screenFadeTweenRef.current = null;
     setPhase("SHELF");
     const { pos, look } = marker.shelfFrame;
     cameraTarget.current.pos.copy(pos);
@@ -626,6 +651,9 @@ function SceneContent() {
     lightDimRef.current = 1;
     beamActiveRef.current = false;
     screenFadeStartedRef.current = false;
+    screenVigTintRef.current = null;
+    screenFadeTweenRef.current?.kill();
+    screenFadeTweenRef.current = null;
     hideScreen();
     hideCone();
 
@@ -647,23 +675,25 @@ function SceneContent() {
     const t01 = marker.traj01 ?? fMain.pos.clone().add(new THREE.Vector3(2, 0.5, 0));
     const t02 = marker.traj02 ?? t01.clone().add(new THREE.Vector3(0, -1.2, 0));
 
-    // 1) Cam: shelf → Camera_01 → Camera_02, Orb: slot → traj00 → traj01 (1.8s)
+    // 1) Cam: shelf → Cam01 → Cam02 (faster), Orb: slot → traj00 → traj01
     tl.add(() => {
-      animateCam([marker.shelfFrame, f01, f02], 1.8);
-      animateOrb(slot, [t00, t01], 1.8);
+      animateCam([marker.shelfFrame, f01, f02], CAM_SHELF_TO_02_SEC);
+      animateOrb(slot, [t00, t01], CAM_SHELF_TO_02_SEC);
     }, 0);
 
-    // 2) Orb descends traj01 → traj02 (0.7s)
+    // 2) Orb descends traj01 → traj02
     tl.add(() => {
-      animateOrb(t01, [t02], 0.7);
-    }, 1.8);
+      animateOrb(t01, [t02], ORB_DROP_DURATION);
+    }, T_ORB_DROP_START);
 
-    // 3) 0.4s pause: beam reveals tip→base, lights dim, screen fade driven by useEffect
+    // 3) After pause on Cam02: beam + screen fade (same moment as cone light)
     const beamIn = { v: 0 };
     const revealIn = { v: 0 };
     const dimmer = { v: 1 };
     tl.add(() => {
-      const vigTint = new THREE.Color(COLOR_HEX[memory.color] ?? "#261a32");
+      const memHex = COLOR_HEX[memory.color] ?? "#2a1f38";
+      screenVigTintRef.current = new THREE.Color(memHex);
+      const vigTint = liftVignetteTint(memHex);
       adaptConeToScreen();
       showCone(vigTint);
       beamActiveRef.current = true;
@@ -687,31 +717,33 @@ function SceneContent() {
 
       aimSpotAtScreen();
 
-      const tex = playbackTexRef.current;
-      if (tex && !screenFadeStartedRef.current) {
-        applyScreenTexture(tex, 0);
-        screenFadeStartedRef.current = true;
-        screenOpacityRef.current = 0;
-        const fadeIn = { v: 0 };
-        gsap.to(fadeIn, {
-          v: 1, duration: SCREEN_FADE_IN_SEC, ease: SCREEN_FADE_IN_EASE,
-          onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
-        });
-      }
-    }, 2.5);
+      screenFadeTweenRef.current?.kill();
+      screenFadeStartedRef.current = true;
+      screenOpacityRef.current = 0;
+      const fadeIn = { v: 0 };
+      screenFadeTweenRef.current = gsap.to(fadeIn, {
+        v: 1, duration: SCREEN_FADE_IN_SEC, ease: SCREEN_FADE_IN_EASE,
+        onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
+      });
 
-    // 4) Camera: Cam02 → Cam03 → CamMain (1.6s, starts after 0.4s pause)
+      const tex = playbackTexRef.current;
+      if (tex) applyScreenTexture(tex, 0);
+    }, T_BEAM_START);
+
+    // 4) Camera: Cam02 → Cam03 → CamMain
     tl.add(() => {
-      animateCam([f02, f03, fMain], 1.6);
-    }, 2.9);
+      animateCam([f02, f03, fMain], CAM_TO_MAIN_DURATION);
+    }, T_CAM_TO_MAIN_START);
 
     // 5) Complete: hide flying orb, enter DESK
     tl.add(() => {
       screenOpacityRef.current = 1;
+      beamActiveRef.current = false;
+      screenFadeTweenRef.current = null;
       setFlying(null);
       setDeskMemoryId(memory.id);
       setPhase("DESK");
-    }, 4.5);
+    }, T_DESK_ENTER);
   }, [
     adaptConeToScreen, applyScreenTexture, hideScreen, hideCone, showCone,
     initData, loadPlaybackTexture, marker, memories, phase, selectedMemoryId,
@@ -765,6 +797,9 @@ function SceneContent() {
     // 2) Once faded: hide screen + cone, orb at traj_03, cam+orb fly home (1.8s)
     tl.add(() => {
       setDeskMemoryId(null);
+      screenFadeTweenRef.current?.kill();
+      screenFadeTweenRef.current = null;
+      screenVigTintRef.current = null;
       disposePlaybackResources(); resetScreenScale(); hideScreen(); hideCone();
       screenOpacityRef.current = 0;
       setFlying({ memory, pos: t03.clone() });
@@ -825,12 +860,16 @@ function SceneContent() {
         />
       )}
 
-      <EffectComposer>
+      <EffectComposer
+        multisampling={EFFECT_COMPOSER.multisampling}
+        resolutionScale={EFFECT_COMPOSER.resolutionScale}
+      >
         <Bloom
-          luminanceThreshold={0.65}
-          luminanceSmoothing={0.4}
-          intensity={0.5}
-          mipmapBlur
+          luminanceThreshold={BLOOM.luminanceThreshold}
+          luminanceSmoothing={BLOOM.luminanceSmoothing}
+          intensity={BLOOM.intensity}
+          radius={BLOOM.radius}
+          mipmapBlur={BLOOM.mipmapBlur}
         />
       </EffectComposer>
     </>

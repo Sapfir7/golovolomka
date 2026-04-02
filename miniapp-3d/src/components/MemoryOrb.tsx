@@ -29,10 +29,20 @@ uniform float uOpacity;
 varying vec2 vUv;
 varying float vFacing;
 void main() {
-  vec4 tex = texture2D(map, clamp(vUv, 0.0, 1.0));
+  vec2 uv = clamp(vUv, 0.02, 0.98);
+  vec2 d = uv - 0.5;
+  float r2 = dot(d, d);
+  uv = clamp(0.5 + d * (1.0 + 0.085 * r2), 0.02, 0.98);
+  const float b = 0.0035;
+  vec4 tex = texture2D(map, uv) * 0.48;
+  tex += texture2D(map, uv + vec2(b, 0.0)) * 0.13;
+  tex += texture2D(map, uv - vec2(b, 0.0)) * 0.13;
+  tex += texture2D(map, uv + vec2(0.0, b)) * 0.13;
+  tex += texture2D(map, uv - vec2(0.0, b)) * 0.13;
   vec3 rgb = tex.rgb;
   float lum = dot(rgb, vec3(0.299, 0.587, 0.114));
-  vec3 tinted = mix(rgb, uTint * (0.55 + 0.85 * lum), 0.45);
+  rgb = mix(vec3(lum), rgb, 0.88);
+  vec3 tinted = mix(rgb, uTint * (0.5 + 0.88 * lum), 0.62);
   float vignette = smoothstep(0.0, 0.5, vFacing);
   gl_FragColor = vec4(tinted, uOpacity * vignette);
 }
