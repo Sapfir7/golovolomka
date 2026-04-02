@@ -13,7 +13,11 @@ import { createErkanProjectionMaterial } from "../materials/erkanProjectionMater
 import { createConeBeamMaterial } from "../materials/coneBeamMaterial";
 import { fetchPlayback } from "../api/client";
 import { BLOOM, EFFECT_COMPOSER, SSAO as SSAO_CFG } from "../postprocessingConfig";
-import { configureGlbPbrMaterials, softenGlbMaterials } from "../utils/gltfMaterialUtils";
+import {
+  configureGlbPbrMaterials,
+  enhanceGltfTextureSampling,
+  softenGlbMaterials,
+} from "../utils/gltfMaterialUtils";
 import {
   CAM_FLY_AFTER_BEAM_DELAY,
   CAM_SHELF_TO_02_SEC,
@@ -272,6 +276,7 @@ function SceneContent() {
 
     configureGlbPbrMaterials(model);
     softenGlbMaterials(model);
+    enhanceGltfTextureSampling(model, gl);
 
     model.traverse((o) => {
       const light = o as THREE.Light;

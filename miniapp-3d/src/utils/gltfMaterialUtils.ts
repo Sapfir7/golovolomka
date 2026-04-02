@@ -94,3 +94,70 @@ export function softenGlbMaterials(root: THREE.Object3D): void {
     }
   });
 }
+
+/**
+ * Reduces streaky / stepped look on oblique surfaces (wood on curved cabinet):
+ * max anisotropic filtering + mipmapped minification where the GPU allows it.
+ * Does not fix faceted mesh or bad UVs — those need Blender.
+ */
+export function enhanceGltfTextureSampling(
+  root: THREE.Object3D,
+  renderer: THREE.WebGLRenderer,
+): void {
+  const maxAniso = Math.min(16, renderer.capabilities.getMaxAnisotropy());
+  const seen = new Set<THREE.Texture>();
+
+  const polish2D = (tex: THREE.Texture | null | undefined): void => {
+    if (!tex?.isTexture || seen.has(tex)) return;
+    if ((tex as THREE.CubeTexture).isCubeTexture) return;
+    seen.add(tex);
+    tex.anisotropy = maxAniso;
+    const img = tex.image as { width?: number; height?: number } | undefined;
+    const w = img && typeof img.width === "number" ? img.width : 0;
+    const h = img && typeof img.height === "number" ? img.height : 0;
+    if (w > 0 && h > 0) {
+      if (THREE.MathUtils.isPowerOfTwo(w) && THREE.MathUtils.isPowerOfTwo(h)) {
+        tex.generateMipmaps = true;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+      } else {
+        tex.generateMipmaps = false;
+        tex.minFilter = THREE.LinearFilter;
+      }
+      tex.magFilter = THREE.LinearFilter;
+    }
+    tex.needsUpdate = true;
+  };
+
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.Material[];
+    for (const mat of mats) {
+      if (!(mat instanceof THREE.MeshStandardMaterial)) continue;
+      mat.flatShading = false;
+      polish2D(mat.map);
+      polish2D(mat.lightMap);
+      polish2D(mat.aoMap);
+      polish2D(mat.emissiveMap);
+      polish2D(mat.bumpMap);
+      polish2D(mat.normalMap);
+      polish2D(mat.displacementMap);
+      polish2D(mat.roughnessMap);
+      polish2D(mat.metalnessMap);
+      if (mat instanceof THREE.MeshPhysicalMaterial) {
+        polish2D(mat.clearcoatMap);
+        polish2D(mat.clearcoatNormalMap);
+        polish2D(mat.sheenColorMap);
+        polish2D(mat.sheenRoughnessMap);
+        polish2D(mat.specularIntensityMap);
+        polish2D(mat.specularColorMap);
+        polish2D(mat.transmissionMap);
+        polish2D(mat.thicknessMap);
+        polish2D(mat.iridescenceMap);
+        polish2D(mat.iridescenceThicknessMap);
+        polish2D(mat.anisotropyMap);
+      }
+      mat.needsUpdate = true;
+    }
+  });
+}
