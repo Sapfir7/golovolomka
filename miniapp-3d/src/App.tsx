@@ -1,13 +1,4 @@
-/**
- * App – root application component.
- *
- * Responsibilities:
- *  1. Initialize Telegram WebApp SDK (expand, set header color, theme)
- *  2. Extract `telegramId` and `initData` from Telegram context (or URL param for dev)
- *  3. Load rooms + active room memories on mount
- *  4. Show loading screen until GLB scene + preview textures are ready
- *  5. Render the 3D Scene + 2D UIOverlay
- */
+/** Корень: Telegram WebApp, загрузка комнат/воспоминаний, 3D Scene + UI. */
 import { useEffect } from "react";
 import WebApp from "@twa-dev/sdk";
 import { Scene } from "./components/Scene";

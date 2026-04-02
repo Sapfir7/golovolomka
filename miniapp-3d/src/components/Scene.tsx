@@ -12,43 +12,31 @@ import { createErkanProjectionMaterial } from "../materials/erkanProjectionMater
 import { createConeBeamMaterial } from "../materials/coneBeamMaterial";
 import { fetchPlayback } from "../api/client";
 import { BLOOM, EFFECT_COMPOSER } from "../postprocessingConfig";
-
-const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik2.glb`;
-const ORB_RADIUS = 0.1125;
-
-/** Telegram Mini App на iPhone: Bloom/post часто даёт чёрный канвас в WKWebView */
-function isLikelyIOS(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
-    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-}
-const IOS_WEBGL_SAFE = isLikelyIOS();
-const NUM_SLOTS = 5;
-
-const SCREEN_UV_ROTATION = -Math.PI / 2;
-const SCREEN_MIRROR_X = true;
-
-const SPOT_BASE_INTENSITY = 8;
-const LIGHT_DIM_FACTOR = 0.22;
-const VIGNETTE_EXPAND = 1.8;
-
-/** Fade-out (back): 0.8s power2.out — fade-in mirrors (gentle in + out) */
-const SCREEN_FADE_OUT_SEC = 0.8;
-const SCREEN_FADE_OUT_EASE = "power2.out";
-const SCREEN_FADE_IN_SEC = 0.8;
-const SCREEN_FADE_IN_EASE = "power2.inOut";
-
-/** Shelf→Cam02 faster, longer hold on Cam02 before beam */
-const CAM_SHELF_TO_02_SEC = 1.45;
-const ORB_DROP_DURATION = 0.7;
-const PAUSE_AT_CAM02_AFTER_DROP_SEC = 0.55;
-const T_ORB_DROP_START = CAM_SHELF_TO_02_SEC;
-const T_ORB_LAND = T_ORB_DROP_START + ORB_DROP_DURATION;
-const T_BEAM_START = T_ORB_LAND + PAUSE_AT_CAM02_AFTER_DROP_SEC;
-const CAM_FLY_AFTER_BEAM_DELAY = 0.4;
-const T_CAM_TO_MAIN_START = T_BEAM_START + CAM_FLY_AFTER_BEAM_DELAY;
-const CAM_TO_MAIN_DURATION = 1.6;
-const T_DESK_ENTER = T_CAM_TO_MAIN_START + CAM_TO_MAIN_DURATION;
+import {
+  CAM_FLY_AFTER_BEAM_DELAY,
+  CAM_SHELF_TO_02_SEC,
+  CAM_TO_MAIN_DURATION,
+  IOS_WEBGL_SAFE,
+  LIGHT_DIM_FACTOR,
+  NUM_SLOTS,
+  ORB_DROP_DURATION,
+  ORB_RADIUS,
+  PAUSE_AT_CAM02_AFTER_DROP_SEC,
+  SCREEN_FADE_IN_EASE,
+  SCREEN_FADE_IN_SEC,
+  SCREEN_FADE_OUT_EASE,
+  SCREEN_FADE_OUT_SEC,
+  SCREEN_MIRROR_X,
+  SCREEN_UV_ROTATION,
+  SCENE_MODEL_URL,
+  SPOT_BASE_INTENSITY,
+  T_BEAM_START,
+  T_CAM_TO_MAIN_START,
+  T_DESK_ENTER,
+  T_ORB_DROP_START,
+  T_ORB_LAND,
+  VIGNETTE_EXPAND,
+} from "../constants/sceneConfig";
 
 function liftVignetteTint(hex: string): THREE.Color {
   const c = new THREE.Color(hex);
@@ -866,7 +854,6 @@ function SceneContent() {
             orbIndex={i}
             previewUrl={memory.previewUrl}
             isSelected={memory.id === selectedMemoryId}
-            isTransitioning={phase === "TRANSITION"}
             onClick={() => onOrbClick(memory, i)}
           />
         );
@@ -876,7 +863,7 @@ function SceneContent() {
         <MemoryOrb
           position={[flying.pos.x, flying.pos.y, flying.pos.z]}
           radius={ORB_RADIUS} color={flying.memory.color} orbIndex={0}
-          previewUrl={flying.memory.previewUrl} isSelected isTransitioning
+          previewUrl={flying.memory.previewUrl} isSelected
         />
       )}
 
@@ -911,7 +898,9 @@ export function Scene() {
       dpr={IOS_WEBGL_SAFE ? [1, 1] : [1, 1.45]}
       style={{ width: "100%", height: "100%" }}
     >
-      <Suspense fallback={null}><SceneContent /></Suspense>
+      <Suspense fallback={null}>
+        <SceneContent />
+      </Suspense>
     </Canvas>
   );
 }

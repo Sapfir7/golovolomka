@@ -1,7 +1,4 @@
-/**
- * MemoryOrb — glass sphere + billboard preview (always faces camera, no parallax swim).
- * Retro matte look + soft top glow (bloom-friendly).
- */
+/** Шар воспоминания: стеклянная оболочка + billboard-превью (шейдер с виньеткой). */
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard } from "@react-three/drei";
@@ -66,7 +63,6 @@ export interface MemoryOrbProps {
   color: MemoryColor;
   orbIndex: number;
   isSelected: boolean;
-  isTransitioning: boolean;
   previewUrl?: string | null;
   radius?: number;
   onClick?: () => void;
