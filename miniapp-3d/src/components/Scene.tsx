@@ -220,7 +220,19 @@ function SceneContent() {
         const mesh = ch as THREE.Mesh;
         if (mesh.isMesh && mesh.geometry) {
           coneMeshRef.current = mesh;
-          const mat = createConeBeamMaterial(mesh.geometry, { color: "#fff6e0", strength: 0 });
+          mesh.geometry.computeBoundingBox();
+          const box = mesh.geometry.boundingBox!;
+          const tipLocal = new THREE.Vector3(
+            (box.min.x + box.max.x) / 2,
+            box.max.y,
+            (box.min.z + box.max.z) / 2,
+          );
+          mesh.updateWorldMatrix(true, false);
+          const tipWorld = tipLocal.clone().applyMatrix4(mesh.matrixWorld);
+          const mat = createConeBeamMaterial(mesh.geometry, {
+            color: "#fff6e0", strength: 0, spotPos: tipWorld,
+            attenuation: 5.0, anglePower: 4.0,
+          });
           coneMatRef.current = mat;
           mesh.material = mat;
         }

@@ -1,20 +1,28 @@
 import * as THREE from "three";
 
+/**
+ * Volumetric cone beam — adapted from threex.volumetricspotlightmaterial approach.
+ *
+ * Core idea: distance-based attenuation from spot position + angle-based
+ * intensity via abs(dot(normal, viewDir))^anglePower. Combined with subtle
+ * FBM noise and progressive reveal for cinematic light beam.
+ */
+
 const vert = `
 uniform float uYMin;
 uniform float uInvH;
 varying float vT;
 varying vec3 vLocalPos;
-varying float vViewDot;
+varying vec3 vNormal2;
+varying vec3 vWorldPosition;
 
 void main() {
   vLocalPos = position;
   vT = clamp((position.y - uYMin) * uInvH, 0.0, 1.0);
+  vNormal2 = normalize(normalMatrix * normal);
 
   vec4 worldPos = modelMatrix * vec4(position, 1.0);
-  vec3 worldNorm = normalize(normalMatrix * normal);
-  vec3 viewDir = normalize(cameraPosition - worldPos.xyz);
-  vViewDot = abs(dot(worldNorm, viewDir));
+  vWorldPosition = worldPos.xyz;
 
   gl_Position = projectionMatrix * viewMatrix * worldPos;
 }
@@ -26,9 +34,14 @@ uniform vec3 uColor;
 uniform float uStrength;
 uniform float uTime;
 uniform float uReveal;
+uniform vec3 uSpotPos;
+uniform float uAttenuation;
+uniform float uAnglePower;
+
 varying float vT;
 varying vec3 vLocalPos;
-varying float vViewDot;
+varying vec3 vNormal2;
+varying vec3 vWorldPosition;
 
 float hash(vec3 p) {
   p = fract(p * vec3(443.897, 441.423, 437.195));
@@ -59,31 +72,28 @@ float fbm(vec3 p) {
 }
 
 void main() {
+  // Distance-based attenuation from light source (threex approach)
+  float dist = distance(vWorldPosition, uSpotPos) / uAttenuation;
+  float intensity = 1.0 - clamp(dist, 0.0, 1.0);
+
+  // Angle-based: cone edges dim, center bright (view-dependent volumetric)
+  vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+  float angleFade = pow(abs(dot(vNormal2, viewDir)), uAnglePower);
+  intensity *= angleFade;
+
   // Progressive reveal: tip first, then base
   float revealEdge = 1.0 - uReveal;
   float revealMask = smoothstep(revealEdge, revealEdge + 0.3, vT);
 
-  // Axial gradient: opaque at tip (vT=1), transparent at base (vT=0)
-  float axialGrad = smoothstep(0.0, 0.6, vT);
-
-  // Low-frequency noise for organic, diffused look
-  vec3 np = vLocalPos * 0.8 + vec3(uTime * 0.05, uTime * 0.08, uTime * 0.04);
+  // Subtle organic noise — low-frequency, slow-moving
+  vec3 np = vLocalPos * 0.6 + vec3(uTime * 0.04, uTime * 0.06, uTime * 0.03);
   float n = fbm(np);
-  float wisp = fbm(vLocalPos * 0.35 + vec3(0.0, uTime * 0.02, 0.0));
 
-  // Smooth edge fade via view angle (hides geometric silhouette)
-  float edgeSoft = smoothstep(0.0, 0.4, vViewDot);
+  float alpha = uStrength * intensity * revealMask;
+  alpha *= mix(0.7, 1.0, n);
 
-  // Noise-based silhouette breakup so the cone shape is not visible
-  float edgeBreak = fbm(vLocalPos * 1.2 + vec3(uTime * 0.08, 0.0, uTime * 0.06));
-  float breakFade = smoothstep(0.3, 0.6, edgeBreak);
-
-  float alpha = uStrength * axialGrad * edgeSoft * revealMask * breakFade;
-  alpha *= mix(0.4, 1.0, n);
-  alpha *= mix(0.5, 1.0, wisp);
-
-  // Emissive output — bright enough for bloom to pick up
-  vec3 col = uColor * (1.3 + 0.4 * n);
+  // Emissive output for bloom pickup
+  vec3 col = uColor * (1.2 + 0.25 * n);
 
   gl_FragColor = vec4(col, alpha);
 }
@@ -91,12 +101,18 @@ void main() {
 
 export function createConeBeamMaterial(
   geometry: THREE.BufferGeometry,
-  opts?: { color?: THREE.ColorRepresentation; strength?: number }
+  opts?: {
+    color?: THREE.ColorRepresentation;
+    strength?: number;
+    spotPos?: THREE.Vector3;
+    attenuation?: number;
+    anglePower?: number;
+  }
 ): THREE.ShaderMaterial {
   geometry.computeBoundingBox();
-  const box = geometry.boundingBox;
-  const minY = box?.min.y ?? -0.5;
-  const maxY = box?.max.y ?? 0.5;
+  const box = geometry.boundingBox!;
+  const minY = box.min.y;
+  const maxY = box.max.y;
   const range = Math.max(maxY - minY, 1e-4);
 
   return new THREE.ShaderMaterial({
@@ -107,6 +123,9 @@ export function createConeBeamMaterial(
       uYMin: { value: minY },
       uInvH: { value: 1 / range },
       uTime: { value: 0 },
+      uSpotPos: { value: opts?.spotPos?.clone() ?? new THREE.Vector3(0, maxY, 0) },
+      uAttenuation: { value: opts?.attenuation ?? 5.0 },
+      uAnglePower: { value: opts?.anglePower ?? 4.0 },
     },
     vertexShader: vert,
     fragmentShader: frag,
