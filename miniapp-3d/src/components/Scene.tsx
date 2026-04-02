@@ -20,8 +20,8 @@ const NUM_SLOTS = 5;
 const SCREEN_UV_ROTATION = -Math.PI / 2;
 const SCREEN_MIRROR_X = true;
 
-const SPOT_BASE_INTENSITY = 12;
-const LIGHT_DIM_FACTOR = 0.35;
+const SPOT_BASE_INTENSITY = 8;
+const LIGHT_DIM_FACTOR = 0.22;
 const VIGNETTE_EXPAND = 1.8;
 
 /** Fade-out (back): 0.8s power2.out — fade-in mirrors (gentle in + out) */
@@ -270,17 +270,23 @@ function SceneContent() {
     gl.shadowMap.enabled = true;
     gl.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    const POINT_BASE = 8;
-    const POINT005 = 14;
+    const POINT_BASE = 5.2;
+    const POINT005 = 9.5;
     const collected: { light: THREE.Light; base: number }[] = [];
 
     model.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh) {
-        const stdMat = m.material;
-        if (stdMat instanceof THREE.MeshStandardMaterial) {
-          stdMat.roughness = Math.min(stdMat.roughness + 0.12, 1.0);
-          stdMat.envMapIntensity = 0.6;
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        for (const mat of mats) {
+          if (mat instanceof THREE.MeshStandardMaterial) {
+            mat.roughness = Math.min(mat.roughness + 0.22, 1.0);
+            mat.envMapIntensity = 0.52;
+          }
+          if (mat instanceof THREE.MeshPhysicalMaterial) {
+            mat.roughness = Math.min(mat.roughness + 0.14, 1.0);
+            mat.envMapIntensity = Math.min(mat.envMapIntensity * 0.9, 0.5);
+          }
         }
       }
       const light = o as THREE.Light;
@@ -298,18 +304,18 @@ function SceneContent() {
           spotScreenRef.current = spot;
           spot.intensity = SPOT_BASE_INTENSITY;
           spot.castShadow = true;
-          spot.shadow.mapSize.set(1024, 1024);
-          spot.shadow.bias = -0.0004;
-          spot.shadow.normalBias = 0.035;
+          spot.shadow.mapSize.set(2048, 2048);
+          spot.shadow.bias = -0.00025;
+          spot.shadow.normalBias = 0.028;
           collected.push({ light, base: SPOT_BASE_INTENSITY });
         } else {
-          light.intensity = 12;
-          collected.push({ light, base: 12 });
+          light.intensity = 7.5;
+          collected.push({ light, base: 7.5 });
         }
       }
       if ((light as THREE.DirectionalLight).isDirectionalLight) {
-        light.intensity = 0.6;
-        collected.push({ light, base: 0.6 });
+        light.intensity = 0.38;
+        collected.push({ light, base: 0.38 });
       }
     });
 
@@ -830,7 +836,7 @@ function SceneContent() {
   return (
     <>
       <CameraAspectSync />
-      <ambientLight intensity={0.18} />
+      <ambientLight intensity={0.11} />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {
@@ -883,7 +889,7 @@ export function Scene() {
       camera={{ position: [0, 2, 8], fov: 45, near: 0.01, far: 500 }}
       gl={{
         antialias: true, powerPreference: "high-performance",
-        toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.88,
+        toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.82,
       }}
       dpr={[1, 1.75]}
       style={{ width: "100%", height: "100%" }}

@@ -168,7 +168,7 @@ export function MemoryOrb({
         <sphereGeometry args={[radius, 28, 28]} />
         <meshPhysicalMaterial
           color={hex}
-          roughness={0.25}
+          roughness={0.38}
           metalness={0.0}
           transparent
           opacity={0.32}
