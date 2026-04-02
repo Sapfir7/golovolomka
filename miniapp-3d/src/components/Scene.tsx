@@ -1,12 +1,6 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
-import {
-  EffectComposer,
-  Bloom,
-  SSAO,
-  ToneMapping,
-  BrightnessContrast,
-} from "@react-three/postprocessing";
+import { EffectComposer, Bloom, SSAO, ToneMapping } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -18,12 +12,8 @@ import { COLOR_HEX, CONE_BEAM_NEUTRAL, FALLBACK_VIGNETTE_HEX } from "../memoryPa
 import { createErkanProjectionMaterial } from "../materials/erkanProjectionMaterial";
 import { createConeBeamMaterial } from "../materials/coneBeamMaterial";
 import { fetchPlayback } from "../api/client";
-import {
-  BLOOM,
-  COMPOSER_EXPOSURE_LIFT,
-  EFFECT_COMPOSER,
-  SSAO as SSAO_CFG,
-} from "../postprocessingConfig";
+import { BLOOM, EFFECT_COMPOSER, SSAO as SSAO_CFG } from "../postprocessingConfig";
+import { configureGlbPbrMaterials, softenGlbMaterials } from "../utils/gltfMaterialUtils";
 import {
   CAM_FLY_AFTER_BEAM_DELAY,
   CAM_SHELF_TO_02_SEC,
@@ -280,24 +270,10 @@ function SceneContent() {
     const POINT005 = 9.5;
     const collected: { light: THREE.Light; base: number }[] = [];
 
+    configureGlbPbrMaterials(model);
+    softenGlbMaterials(model);
+
     model.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.isMesh) {
-        const mats = Array.isArray(m.material) ? m.material : [m.material];
-        for (const mat of mats) {
-          if (mat instanceof THREE.MeshStandardMaterial) {
-            mat.roughness = Math.min(mat.roughness + 0.38, 1.0);
-            mat.metalness = Math.min(mat.metalness, 0.12);
-            mat.envMapIntensity = Math.min(mat.envMapIntensity * 0.85, 0.45);
-          }
-          if (mat instanceof THREE.MeshPhysicalMaterial) {
-            mat.roughness = Math.min(mat.roughness + 0.28, 1.0);
-            mat.metalness = Math.min(mat.metalness, 0.1);
-            mat.envMapIntensity = Math.min(mat.envMapIntensity * 0.82, 0.42);
-            if (mat.clearcoat > 0) mat.clearcoatRoughness = Math.min(mat.clearcoatRoughness + 0.25, 1);
-          }
-        }
-      }
       const light = o as THREE.Light;
       if (!light.isLight) return;
       light.castShadow = false;
@@ -845,7 +821,7 @@ function SceneContent() {
   return (
     <>
       <CameraAspectSync />
-      <ambientLight intensity={0.075} />
+      <ambientLight intensity={0.11} />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {
@@ -901,10 +877,6 @@ function SceneContent() {
             radius={BLOOM.radius}
             mipmapBlur={BLOOM.mipmapBlur}
           />
-          <BrightnessContrast
-            brightness={COMPOSER_EXPOSURE_LIFT.brightness}
-            contrast={COMPOSER_EXPOSURE_LIFT.contrast}
-          />
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
         </EffectComposer>
       )}
@@ -920,7 +892,7 @@ export function Scene() {
       gl={{
         antialias: true,
         powerPreference: IOS_WEBGL_SAFE ? "default" : "high-performance",
-        toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2,
+        toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.82,
       }}
       dpr={IOS_WEBGL_SAFE ? [1, 1] : [1, 1.45]}
       style={{ width: "100%", height: "100%" }}
