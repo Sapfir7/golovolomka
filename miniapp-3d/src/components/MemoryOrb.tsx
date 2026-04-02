@@ -23,7 +23,6 @@ precision highp float;
 uniform sampler2D map;
 uniform vec3 uTint;
 uniform float uOpacity;
-uniform float uTime;
 varying vec2 vUv;
 
 void main() {
@@ -39,21 +38,26 @@ void main() {
   vec3 photoTinted = mix(rgb, uTint * (0.48 + 0.85 * lum), 0.55);
 
   float rn = clamp(r * 2.0, 0.0, 1.0);
+
+  // Inner vignette: pull mid-radius toward memory hue, strength follows photo brightness
+  float innerVig = smoothstep(0.2, 0.5, rn) * (1.0 - smoothstep(0.46, 0.8, rn));
+  float memSat = 0.42 + 0.58 * lum;
+  vec3 memWash = uTint * memSat;
+  vec3 saturated = mix(photoTinted, memWash, innerVig * 0.5);
+
   float photoW = 1.0 - smoothstep(0.38, 0.86, rn);
   vec3 edgeMid = uTint * 0.48;
   vec3 edgeDark = uTint * 0.11;
   vec3 edgeFill = mix(edgeMid, edgeDark, smoothstep(0.5, 1.0, rn));
-  vec3 tinted = mix(edgeFill, photoTinted, photoW);
+  vec3 tinted = mix(edgeFill, saturated, photoW);
 
   float topGlow = smoothstep(0.2, 0.62, vUv.y) * smoothstep(0.55, 0.25, r) * 0.35;
   tinted += uTint * topGlow;
   float botGlow = smoothstep(0.88, 0.42, vUv.y) * smoothstep(0.32, 0.5, r) * 0.09;
   tinted += uTint * 0.9 * botGlow;
 
-  float g = fract(sin(dot(vUv * 620.0 + uTime * 0.5, vec2(12.9898, 78.233))) * 43758.5453);
-  tinted += (g - 0.5) * 0.032;
-
-  gl_FragColor = vec4(tinted, uOpacity * disk);
+  float alphaRadial = mix(0.99, 1.0, smoothstep(0.16, 0.74, rn));
+  gl_FragColor = vec4(tinted, uOpacity * disk * alphaRadial);
 }
 `;
 
@@ -111,7 +115,6 @@ export function MemoryOrb({
         map: { value: texture },
         uTint: { value: tintColor.clone() },
         uOpacity: { value: 1.0 },
-        uTime: { value: 0 },
       },
       vertexShader: previewVert,
       fragmentShader: previewFrag,
@@ -130,9 +133,8 @@ export function MemoryOrb({
     if (!groupRef.current) return;
     const t = clock.getElapsedTime();
     if (previewMatRef.current) {
-      previewMatRef.current.uniforms.uTime.value = t;
-      const base = isSelected ? 0.98 : 0.95;
-      const pulse = Math.sin(t * 0.7 + phase) * 0.02;
+      const base = isSelected ? 0.995 : 0.99;
+      const pulse = Math.sin(t * 0.7 + phase) * 0.004;
       previewMatRef.current.uniforms.uOpacity.value = Math.min(1.0, base + pulse);
     } else if (coreRef.current) {
       const base = isSelected ? 0.45 : 0.35;
