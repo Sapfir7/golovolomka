@@ -15,6 +15,14 @@ import { BLOOM, EFFECT_COMPOSER } from "../postprocessingConfig";
 
 const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik2.glb`;
 const ORB_RADIUS = 0.1125;
+
+/** Telegram Mini App на iPhone: Bloom/post часто даёт чёрный канвас в WKWebView */
+function isLikelyIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+const IOS_WEBGL_SAFE = isLikelyIOS();
 const NUM_SLOTS = 5;
 
 const SCREEN_UV_ROTATION = -Math.PI / 2;
@@ -186,6 +194,12 @@ function SceneContent() {
   const setLoadingPlayback = useStore((s) => s.setLoadingPlayback);
   const setDeskOrbTint = useStore((s) => s.setDeskOrbTint);
   const deskOrbTint = useStore((s) => s.deskOrbTint);
+  const setGlbReady = useStore((s) => s.setGlbReady);
+
+  useEffect(() => {
+    setGlbReady(true);
+    return () => setGlbReady(false);
+  }, [setGlbReady]);
 
   const [flying, setFlying] = useState<{ memory: Memory; pos: THREE.Vector3 } | null>(null);
   const [deskMemoryId, setDeskMemoryId] = useState<string | null>(null);
@@ -866,18 +880,20 @@ function SceneContent() {
         />
       )}
 
-      <EffectComposer
-        multisampling={EFFECT_COMPOSER.multisampling}
-        resolutionScale={EFFECT_COMPOSER.resolutionScale}
-      >
-        <Bloom
-          luminanceThreshold={BLOOM.luminanceThreshold}
-          luminanceSmoothing={BLOOM.luminanceSmoothing}
-          intensity={BLOOM.intensity}
-          radius={BLOOM.radius}
-          mipmapBlur={BLOOM.mipmapBlur}
-        />
-      </EffectComposer>
+      {!IOS_WEBGL_SAFE && (
+        <EffectComposer
+          multisampling={EFFECT_COMPOSER.multisampling}
+          resolutionScale={EFFECT_COMPOSER.resolutionScale}
+        >
+          <Bloom
+            luminanceThreshold={BLOOM.luminanceThreshold}
+            luminanceSmoothing={BLOOM.luminanceSmoothing}
+            intensity={BLOOM.intensity}
+            radius={BLOOM.radius}
+            mipmapBlur={BLOOM.mipmapBlur}
+          />
+        </EffectComposer>
+      )}
     </>
   );
 }
@@ -888,10 +904,11 @@ export function Scene() {
       shadows={{ type: THREE.PCFSoftShadowMap }}
       camera={{ position: [0, 2, 8], fov: 45, near: 0.01, far: 500 }}
       gl={{
-        antialias: true, powerPreference: "high-performance",
+        antialias: true,
+        powerPreference: IOS_WEBGL_SAFE ? "default" : "high-performance",
         toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.82,
       }}
-      dpr={[1, 1.45]}
+      dpr={IOS_WEBGL_SAFE ? [1, 1] : [1, 1.45]}
       style={{ width: "100%", height: "100%" }}
     >
       <Suspense fallback={null}><SceneContent /></Suspense>

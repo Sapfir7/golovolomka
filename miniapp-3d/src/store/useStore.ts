@@ -56,6 +56,10 @@ interface StoreState {
   /** Цвет шара у проектора — для виньетки в фазе DESK */
   deskOrbTint: MemoryColor | null;
   setDeskOrbTint: (c: MemoryColor | null) => void;
+
+  /** GLB + первый кадр SceneContent (иначе после API остаётся чёрный фон из‑за Suspense fallback=null) */
+  glbReady: boolean;
+  setGlbReady: (v: boolean) => void;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -119,4 +123,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
   deskOrbTint: null,
   setDeskOrbTint: (c) => set({ deskOrbTint: c }),
+
+  glbReady: false,
+  setGlbReady: (v) => set({ glbReady: v }),
 }));

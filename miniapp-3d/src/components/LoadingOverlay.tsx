@@ -3,18 +3,21 @@ import { useStore } from "../store/useStore";
 
 export function LoadingOverlay() {
   const phase = useStore((s) => s.phase);
+  const glbReady = useStore((s) => s.glbReady);
   const [visible, setVisible] = useState(true);
   const [fading, setFading] = useState(false);
 
+  const blocking = phase === "LOADING" || !glbReady;
+
   useEffect(() => {
-    if (phase !== "LOADING") {
+    if (!blocking) {
       setFading(true);
       const timer = setTimeout(() => setVisible(false), 600);
       return () => clearTimeout(timer);
     }
     setVisible(true);
     setFading(false);
-  }, [phase]);
+  }, [blocking]);
 
   if (!visible) return null;
 
