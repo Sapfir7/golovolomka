@@ -179,20 +179,20 @@ export function MemoryOrb({
 
       <pointLight color={hex} intensity={0.28} distance={0.55} decay={2} />
 
-      <mesh renderOrder={0}>
-        <sphereGeometry args={[radius, 20, 20]} />
+      <mesh castShadow receiveShadow renderOrder={0}>
+        <sphereGeometry args={[radius, 24, 24]} />
         <meshPhysicalMaterial
           color={hex}
-          roughness={0.38}
+          roughness={0.56}
           metalness={0.0}
           transparent
           opacity={0.32}
-          transmission={0.25}
-          thickness={0.6}
+          transmission={0.2}
+          thickness={0.55}
           ior={1.45}
-          envMapIntensity={0.4}
-          clearcoat={0.3}
-          clearcoatRoughness={0.15}
+          envMapIntensity={0.32}
+          clearcoat={0.22}
+          clearcoatRoughness={0.42}
           depthWrite={false}
           side={THREE.FrontSide}
         />

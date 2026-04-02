@@ -1,6 +1,13 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
-import { EffectComposer, Bloom } from "@react-three/postprocessing";
+import {
+  EffectComposer,
+  Bloom,
+  SSAO,
+  ToneMapping,
+  BrightnessContrast,
+} from "@react-three/postprocessing";
+import { ToneMappingMode } from "postprocessing";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import gsap from "gsap";
@@ -11,7 +18,12 @@ import { COLOR_HEX, CONE_BEAM_NEUTRAL, FALLBACK_VIGNETTE_HEX } from "../memoryPa
 import { createErkanProjectionMaterial } from "../materials/erkanProjectionMaterial";
 import { createConeBeamMaterial } from "../materials/coneBeamMaterial";
 import { fetchPlayback } from "../api/client";
-import { BLOOM, EFFECT_COMPOSER } from "../postprocessingConfig";
+import {
+  BLOOM,
+  COMPOSER_EXPOSURE_LIFT,
+  EFFECT_COMPOSER,
+  SSAO as SSAO_CFG,
+} from "../postprocessingConfig";
 import {
   CAM_FLY_AFTER_BEAM_DELAY,
   CAM_SHELF_TO_02_SEC,
@@ -153,14 +165,6 @@ function configureGlbMeshShadows(root: THREE.Object3D): void {
       p = p.parent;
     }
 
-    const pos = mesh.geometry.getAttribute("position");
-    const vCount = pos?.count ?? 0;
-    if (vCount < 24) {
-      mesh.castShadow = false;
-      mesh.receiveShadow = true;
-      return;
-    }
-
     mesh.castShadow = true;
     mesh.receiveShadow = true;
   });
@@ -282,12 +286,15 @@ function SceneContent() {
         const mats = Array.isArray(m.material) ? m.material : [m.material];
         for (const mat of mats) {
           if (mat instanceof THREE.MeshStandardMaterial) {
-            mat.roughness = Math.min(mat.roughness + 0.22, 1.0);
-            mat.envMapIntensity = 0.52;
+            mat.roughness = Math.min(mat.roughness + 0.38, 1.0);
+            mat.metalness = Math.min(mat.metalness, 0.12);
+            mat.envMapIntensity = Math.min(mat.envMapIntensity * 0.85, 0.45);
           }
           if (mat instanceof THREE.MeshPhysicalMaterial) {
-            mat.roughness = Math.min(mat.roughness + 0.14, 1.0);
-            mat.envMapIntensity = Math.min(mat.envMapIntensity * 0.9, 0.5);
+            mat.roughness = Math.min(mat.roughness + 0.28, 1.0);
+            mat.metalness = Math.min(mat.metalness, 0.1);
+            mat.envMapIntensity = Math.min(mat.envMapIntensity * 0.82, 0.42);
+            if (mat.clearcoat > 0) mat.clearcoatRoughness = Math.min(mat.clearcoatRoughness + 0.25, 1);
           }
         }
       }
@@ -306,7 +313,7 @@ function SceneContent() {
           spotScreenRef.current = spot;
           spot.intensity = SPOT_BASE_INTENSITY;
           spot.castShadow = true;
-          spot.shadow.mapSize.set(2048, 2048);
+          spot.shadow.mapSize.set(1024, 1024);
           spot.shadow.bias = -0.0001;
           spot.shadow.normalBias = 0.05;
           collected.push({ light, base: SPOT_BASE_INTENSITY });
@@ -838,7 +845,7 @@ function SceneContent() {
   return (
     <>
       <CameraAspectSync />
-      <ambientLight intensity={0.11} />
+      <ambientLight intensity={0.075} />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {
@@ -871,7 +878,22 @@ function SceneContent() {
         <EffectComposer
           multisampling={EFFECT_COMPOSER.multisampling}
           resolutionScale={EFFECT_COMPOSER.resolutionScale}
+          enableNormalPass
+          depthBuffer
         >
+          <SSAO
+            intensity={SSAO_CFG.intensity}
+            samples={SSAO_CFG.samples}
+            rings={SSAO_CFG.rings}
+            radius={SSAO_CFG.radius}
+            bias={SSAO_CFG.bias}
+            luminanceInfluence={SSAO_CFG.luminanceInfluence}
+            worldDistanceThreshold={SSAO_CFG.worldDistanceThreshold}
+            worldDistanceFalloff={SSAO_CFG.worldDistanceFalloff}
+            worldProximityThreshold={SSAO_CFG.worldProximityThreshold}
+            worldProximityFalloff={SSAO_CFG.worldProximityFalloff}
+            depthAwareUpsampling
+          />
           <Bloom
             luminanceThreshold={BLOOM.luminanceThreshold}
             luminanceSmoothing={BLOOM.luminanceSmoothing}
@@ -879,6 +901,11 @@ function SceneContent() {
             radius={BLOOM.radius}
             mipmapBlur={BLOOM.mipmapBlur}
           />
+          <BrightnessContrast
+            brightness={COMPOSER_EXPOSURE_LIFT.brightness}
+            contrast={COMPOSER_EXPOSURE_LIFT.contrast}
+          />
+          <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
         </EffectComposer>
       )}
     </>
@@ -893,7 +920,7 @@ export function Scene() {
       gl={{
         antialias: true,
         powerPreference: IOS_WEBGL_SAFE ? "default" : "high-performance",
-        toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.82,
+        toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2,
       }}
       dpr={IOS_WEBGL_SAFE ? [1, 1] : [1, 1.45]}
       style={{ width: "100%", height: "100%" }}
