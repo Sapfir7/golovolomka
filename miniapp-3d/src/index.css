@@ -40,7 +40,7 @@ body {
   width: 36px;
   height: 36px;
   border: 3px solid rgba(255, 255, 255, 0.12);
-  border-top-color: rgba(255, 255, 255, 0.7);
+  border-top-color: #5b94ed;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }

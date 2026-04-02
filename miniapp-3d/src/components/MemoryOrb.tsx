@@ -39,10 +39,10 @@ void main() {
   vec3 tinted = mix(rgb, uTint * (0.48 + 0.85 * lum), 0.55);
 
   float topGlow = smoothstep(0.2, 0.62, vUv.y) * smoothstep(0.55, 0.25, r) * 0.42;
-  tinted += vec3(1.0, 0.94, 0.82) * topGlow;
+  tinted += vec3(0.941, 0.824, 0.008) * topGlow;
 
   float botCool = smoothstep(0.88, 0.42, vUv.y) * smoothstep(0.32, 0.5, r) * 0.1;
-  tinted += vec3(0.82, 0.86, 1.0) * botCool;
+  tinted += vec3(0.357, 0.580, 0.929) * botCool;
 
   float g = fract(sin(dot(vUv * 620.0 + uTime * 0.5, vec2(12.9898, 78.233))) * 43758.5453);
   tinted += (g - 0.5) * 0.035;

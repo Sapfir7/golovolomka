@@ -79,14 +79,14 @@ void main() {
   photoRetro = clamp(photoRetro * 0.95 + 0.018, 0.0, 1.0);
   vec3 tinted = mix(photoRetro, uVigTint * (0.5 + lum0 * 0.88), uColorMix);
 
-  vec3 vigBase = mix(uVigTint, vec3(1.0, 0.97, 0.94), 0.14);
+  vec3 vigBase = mix(uVigTint, vec3(0.98, 0.95, 0.55), 0.14);
   float vn = fbmCheap(vUv * 2.6 + vec2(uTime * 0.03, uTime * 0.02));
   vec3 vigCol = vigBase * (0.14 + 0.16 * vn);
 
   vec3 rgb = mix(vigCol, tinted, photoMask);
 
   float bloomR = smoothstep(0.42, 0.72, memR) * (1.0 - smoothstep(0.72, 1.35, memR));
-  vec3 warmRim = mix(uVigTint, vec3(1.0, 0.96, 0.88), 0.45);
+  vec3 warmRim = mix(uVigTint, vec3(0.941, 0.824, 0.008), 0.45);
   rgb += warmRim * bloomR * uVigStr * 0.22;
 
   float outerNoise = fbmCheap(vUv * 3.8 + vec2(uTime * 0.04, uTime * 0.03));

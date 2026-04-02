@@ -7,7 +7,12 @@ import gsap from "gsap";
 import { useStore } from "../store/useStore";
 import { MemoryOrb } from "./MemoryOrb";
 import type { Memory, Playback } from "../types";
-import { COLOR_HEX } from "../memoryPalette";
+import {
+  COLOR_HEX,
+  CONE_BEAM_NEUTRAL,
+  FALLBACK_VIGNETTE_HEX,
+  LIGHT_CYCLE_HEX,
+} from "../memoryPalette";
 import { createErkanProjectionMaterial } from "../materials/erkanProjectionMaterial";
 import { createConeBeamMaterial } from "../materials/coneBeamMaterial";
 import { fetchPlayback } from "../api/client";
@@ -273,6 +278,7 @@ function SceneContent() {
     const POINT_BASE = 5.2;
     const POINT005 = 9.5;
     const collected: { light: THREE.Light; base: number }[] = [];
+    let lightPaletteIdx = 0;
 
     model.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -296,12 +302,15 @@ function SceneContent() {
       if ((light as THREE.PointLight).isPointLight) {
         const inten = (o.name === "Point.005" || o.name === "Point005") ? POINT005 : POINT_BASE;
         light.intensity = inten;
+        light.color.set(LIGHT_CYCLE_HEX[lightPaletteIdx % LIGHT_CYCLE_HEX.length]);
+        lightPaletteIdx += 1;
         collected.push({ light, base: inten });
       }
       if ((light as THREE.SpotLight).isSpotLight) {
         if (o.name === "Spot_screen" || o.name === "Spot.001") {
           const spot = light as THREE.SpotLight;
           spotScreenRef.current = spot;
+          spot.color.set(COLOR_HEX.yellow);
           spot.intensity = SPOT_BASE_INTENSITY;
           spot.castShadow = true;
           spot.shadow.mapSize.set(2048, 2048);
@@ -310,11 +319,15 @@ function SceneContent() {
           collected.push({ light, base: SPOT_BASE_INTENSITY });
         } else {
           light.intensity = 7.5;
+          light.color.set(LIGHT_CYCLE_HEX[lightPaletteIdx % LIGHT_CYCLE_HEX.length]);
+          lightPaletteIdx += 1;
           collected.push({ light, base: 7.5 });
         }
       }
       if ((light as THREE.DirectionalLight).isDirectionalLight) {
         light.intensity = 0.38;
+        light.color.set(LIGHT_CYCLE_HEX[lightPaletteIdx % LIGHT_CYCLE_HEX.length]);
+        lightPaletteIdx += 1;
         collected.push({ light, base: 0.38 });
       }
     });
@@ -353,7 +366,7 @@ function SceneContent() {
           const baseWorld = baseLocal.clone().applyMatrix4(mesh.matrixWorld);
           const atten = Math.max(tipWorld.distanceTo(baseWorld) * 1.3, 3.0);
           const mat = createConeBeamMaterial(mesh.geometry, {
-            color: "#fff6e0", strength: 0, spotPos: tipWorld,
+            color: CONE_BEAM_NEUTRAL, strength: 0, spotPos: tipWorld,
             attenuation: atten, anglePower: 2.0,
           });
           coneMatRef.current = mat;
@@ -438,7 +451,7 @@ function SceneContent() {
         if (prev instanceof THREE.ShaderMaterial) prev.dispose();
         const baseHex = screenVigTintRef.current
           ? `#${screenVigTintRef.current.getHexString()}`
-          : (deskOrbTint ? COLOR_HEX[deskOrbTint] : "#2a1f38");
+          : (deskOrbTint ? COLOR_HEX[deskOrbTint] : FALLBACK_VIGNETTE_HEX);
         const vigTint = liftVignetteTint(baseHex);
         const mat = createErkanProjectionMaterial(texture, {
           vignetteTint: vigTint, vignetteStrength: 0.72,
@@ -476,10 +489,13 @@ function SceneContent() {
   const hideCone = useCallback(() => {
     const conusNode = model.getObjectByName("Conus_light");
     if (conusNode) conusNode.visible = false;
+    const spot = spotScreenRef.current;
+    if (spot) spot.color.set(COLOR_HEX.yellow);
     beamStrengthRef.current = 0;
     if (coneMatRef.current) {
       coneMatRef.current.uniforms.uStrength.value = 0;
       coneMatRef.current.uniforms.uReveal.value = 0;
+      coneMatRef.current.uniforms.uColor.value.set(CONE_BEAM_NEUTRAL);
     }
     const orig = coneOrigScaleRef.current;
     if (conusNode && orig) conusNode.scale.copy(orig);
@@ -697,9 +713,11 @@ function SceneContent() {
     const revealIn = { v: 0 };
     const dimmer = { v: 1 };
     tl.add(() => {
-      const memHex = COLOR_HEX[memory.color] ?? "#2a1f38";
+      const memHex = COLOR_HEX[memory.color] ?? FALLBACK_VIGNETTE_HEX;
       screenVigTintRef.current = new THREE.Color(memHex);
       const vigTint = liftVignetteTint(memHex);
+      const spot = spotScreenRef.current;
+      if (spot) spot.color.set(memHex);
       adaptConeToScreen();
       showCone(vigTint);
       beamActiveRef.current = true;
@@ -836,7 +854,7 @@ function SceneContent() {
   return (
     <>
       <CameraAspectSync />
-      <ambientLight intensity={0.11} />
+      <ambientLight intensity={0.1} color="#c8d4f4" />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {

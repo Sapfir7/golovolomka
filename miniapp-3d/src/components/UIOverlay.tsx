@@ -20,7 +20,7 @@ export function UIOverlay() {
           <div className="text-sm text-white/85 mb-4 line-clamp-3">{selected.note || "Без описания"}</div>
           <button
             type="button"
-            className="w-full py-3 rounded-xl bg-violet-600/90 hover:bg-violet-500 text-white text-sm font-medium"
+            className="w-full py-3 rounded-xl bg-[#9a95fb]/90 hover:bg-[#b5b0fc] text-white text-sm font-medium transition-colors"
             onClick={() => window.dispatchEvent(new Event("scene:watch"))}
           >
             Посмотреть воспоминание

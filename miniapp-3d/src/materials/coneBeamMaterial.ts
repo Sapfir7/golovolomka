@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { CONE_BEAM_NEUTRAL } from "../memoryPalette";
 
 /**
  * Volumetric cone beam — distance + angle attenuation + 2D FBM noise
@@ -155,7 +156,7 @@ export function createConeBeamMaterial(
 
   return new THREE.ShaderMaterial({
     uniforms: {
-      uColor: { value: new THREE.Color(opts?.color ?? "#fff6e0") },
+      uColor: { value: new THREE.Color(opts?.color ?? CONE_BEAM_NEUTRAL) },
       uStrength: { value: opts?.strength ?? 0.0 },
       uReveal: { value: 0.0 },
       uYMin: { value: minY },
