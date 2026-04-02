@@ -305,8 +305,8 @@ function SceneContent() {
           spot.intensity = SPOT_BASE_INTENSITY;
           spot.castShadow = true;
           spot.shadow.mapSize.set(2048, 2048);
-          spot.shadow.bias = -0.00025;
-          spot.shadow.normalBias = 0.028;
+          spot.shadow.bias = -0.0001;
+          spot.shadow.normalBias = 0.05;
           collected.push({ light, base: SPOT_BASE_INTENSITY });
         } else {
           light.intensity = 7.5;
@@ -496,7 +496,6 @@ function SceneContent() {
 
     const mat = screenShaderRef.current;
     if (mat && mat.uniforms.uOpacity) mat.uniforms.uOpacity.value = screenOpacityRef.current;
-    if (mat && mat.uniforms.uTime) mat.uniforms.uTime.value += delta;
 
     const vt = deskVideoTextureRef.current;
     if (vt && vt.image instanceof HTMLVideoElement && vt.image.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)

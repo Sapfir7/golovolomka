@@ -92,7 +92,8 @@ export function MemoryOrb({
   const emissive = EMISSIVE_HEX[color];
   const tintColor = useMemo(() => new THREE.Color(hex), [hex]);
 
-  const planeSize = radius * 1.68;
+  /** Disk diameter ≈ sphere silhouette (2·r); was 1.68·r and left transparent rim */
+  const planeSize = radius * 2.06;
 
   useEffect(() => {
     if (!previewUrl) { setTexture(null); return; }
@@ -122,6 +123,9 @@ export function MemoryOrb({
       toneMapped: false,
       depthWrite: false,
       depthTest: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -4,
     });
     previewMatRef.current = m;
     return m;
@@ -154,7 +158,7 @@ export function MemoryOrb({
         <Billboard follow={true} lockX={false} lockY={false} lockZ={false}>
           <mesh
             material={previewMat}
-            position={[0, 0, 0.004]}
+            position={[0, 0, radius * 0.042]}
             renderOrder={-1}
           >
             <planeGeometry args={[planeSize, planeSize]} />

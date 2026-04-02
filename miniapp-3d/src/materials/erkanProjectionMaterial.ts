@@ -25,7 +25,6 @@ uniform vec3 uVigTint;
 uniform float uVigStr;
 uniform float uOpacity;
 uniform float uColorMix;
-uniform float uTime;
 uniform float uTexScale;
 uniform float uSphereCurve;
 varying vec2 vUv;
@@ -80,7 +79,7 @@ void main() {
   vec3 tinted = mix(photoRetro, uVigTint * (0.5 + lum0 * 0.88), uColorMix);
 
   vec3 vigBase = mix(uVigTint, vec3(0.98, 0.95, 0.55), 0.14);
-  float vn = fbmCheap(vUv * 2.6 + vec2(uTime * 0.03, uTime * 0.02));
+  float vn = fbmCheap(vUv * 2.6);
   vec3 vigCol = vigBase * (0.14 + 0.16 * vn);
 
   vec3 rgb = mix(vigCol, tinted, photoMask);
@@ -89,19 +88,19 @@ void main() {
   vec3 warmRim = mix(uVigTint, vec3(0.941, 0.824, 0.008), 0.45);
   rgb += warmRim * bloomR * uVigStr * 0.22;
 
-  float outerNoise = fbmCheap(vUv * 3.8 + vec2(uTime * 0.04, uTime * 0.03));
+  float outerNoise = fbmCheap(vUv * 3.8);
   float outerEdge = 0.72 + outerNoise * 0.1;
   float outerMask = 1.0 - smoothstep(outerEdge - 0.2, outerEdge + 0.07, ellipse);
 
   float fiberZone = smoothstep(0.42, 0.62, ellipse) *
                     (1.0 - smoothstep(outerEdge - 0.06, outerEdge + 0.1, ellipse));
-  outerMask += fiberZone * fbmCheap(vUv * 6.0 + vec2(uTime * 0.05, -uTime * 0.04)) * 0.04;
+  outerMask += fiberZone * fbmCheap(vUv * 6.0) * 0.04;
   outerMask = clamp(outerMask, 0.0, 1.0);
 
   float innerGlow = 1.0 - smoothstep(0.0, uTexScale * 0.5, ellipse);
   rgb += uVigTint * innerGlow * 0.035;
 
-  float grain = (hash2(vUv * 500.0 + vec2(uTime * 17.0, uTime * 23.0)) - 0.5) * 0.014;
+  float grain = (hash2(vUv * 500.0) - 0.5) * 0.014;
 
   float finalAlpha = outerMask * uOpacity;
   if (finalAlpha < 0.004) discard;
@@ -134,7 +133,6 @@ export function createErkanProjectionMaterial(
       uColorMix: { value: u.colorMix ?? 0.3 },
       uTexScale: { value: u.texScale ?? 1.0 },
       uSphereCurve: { value: u.sphereCurve ?? 0.07 },
-      uTime: { value: 0 },
     },
     vertexShader,
     fragmentShader,
