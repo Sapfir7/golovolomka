@@ -1,5 +1,5 @@
 /** GLB из `miniapp-3d/public/` → после сборки в `miniapp-3d-dist/` */
-export const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik2.glb`;
+export const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik2_with_skaf.glb`;
 
 export const ORB_RADIUS = 0.1125;
 export const NUM_SLOTS = 5;
