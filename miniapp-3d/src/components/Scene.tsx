@@ -23,6 +23,12 @@ const SPOT_BASE_INTENSITY = 12;
 const LIGHT_DIM_FACTOR = 0.35;
 const VIGNETTE_EXPAND = 1.8;
 
+/** Fade-out (back): 0.8s power2.out — fade-in uses symmetric curve + slightly longer build */
+const SCREEN_FADE_OUT_SEC = 0.8;
+const SCREEN_FADE_OUT_EASE = "power2.out";
+const SCREEN_FADE_IN_SEC = 1.05;
+const SCREEN_FADE_IN_EASE = "power2.inOut";
+
 const _fwd = new THREE.Vector3(0, 0, -1);
 const _quat = new THREE.Quaternion();
 
@@ -99,8 +105,50 @@ function smoothConeNormals(geometry: THREE.BufferGeometry): void {
   normAttr.needsUpdate = true;
 }
 
+const SHADOW_SKIP_NAMES = new Set([
+  "trajectory_00", "trajectory_01", "trajectory_02", "trajectory_03", "trajectory_04",
+  "Conus_light", "screen",
+]);
+
+/**
+ * After GLB load: enable cast/receive shadows on scene meshes for light volume.
+ * Skips helpers, cone, screen, trajectories; ignores tiny debris to limit GPU cost.
+ */
+function configureGlbMeshShadows(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+
+    if (SHADOW_SKIP_NAMES.has(o.name)) {
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      return;
+    }
+    let p: THREE.Object3D | null = o.parent;
+    while (p) {
+      if (SHADOW_SKIP_NAMES.has(p.name)) {
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        return;
+      }
+      p = p.parent;
+    }
+
+    const pos = mesh.geometry.getAttribute("position");
+    const vCount = pos?.count ?? 0;
+    if (vCount < 24) {
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      return;
+    }
+
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+  });
+}
+
 function SceneContent() {
-  const { camera } = useThree();
+  const { camera, gl } = useThree();
   const { scene } = useGLTF(SCENE_MODEL_URL);
   const model = useMemo(() => scene.clone(true), [scene]);
 
@@ -192,8 +240,11 @@ function SceneContent() {
     };
   }, [model]);
 
-  /* ── Lights ── */
+  /* ── Lights + shadows (one spot casts; meshes via configureGlbMeshShadows) ── */
   useEffect(() => {
+    gl.shadowMap.enabled = true;
+    gl.shadowMap.type = THREE.PCFSoftShadowMap;
+
     const POINT_BASE = 8;
     const POINT005 = 14;
     const collected: { light: THREE.Light; base: number }[] = [];
@@ -201,7 +252,6 @@ function SceneContent() {
     model.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh) {
-        m.castShadow = false; m.receiveShadow = false;
         const stdMat = m.material;
         if (stdMat instanceof THREE.MeshStandardMaterial) {
           stdMat.roughness = Math.min(stdMat.roughness + 0.12, 1.0);
@@ -219,8 +269,13 @@ function SceneContent() {
       }
       if ((light as THREE.SpotLight).isSpotLight) {
         if (o.name === "Spot_screen" || o.name === "Spot.001") {
-          spotScreenRef.current = light as THREE.SpotLight;
-          light.intensity = SPOT_BASE_INTENSITY;
+          const spot = light as THREE.SpotLight;
+          spotScreenRef.current = spot;
+          spot.intensity = SPOT_BASE_INTENSITY;
+          spot.castShadow = true;
+          spot.shadow.mapSize.set(1024, 1024);
+          spot.shadow.bias = -0.0004;
+          spot.shadow.normalBias = 0.035;
           collected.push({ light, base: SPOT_BASE_INTENSITY });
         } else {
           light.intensity = 12;
@@ -234,6 +289,7 @@ function SceneContent() {
     });
 
     sceneLightsRef.current = collected;
+    configureGlbMeshShadows(model);
 
     const hideNames = new Set([
       "trajectory_00", "trajectory_01", "trajectory_02",
@@ -274,7 +330,7 @@ function SceneContent() {
         }
       });
     }
-  }, [model]);
+  }, [gl, model]);
 
   /* ── Initial camera ── */
   useEffect(() => {
@@ -490,7 +546,7 @@ function SceneContent() {
       screenOpacityRef.current = 0;
       const fo = { v: 0 };
       gsap.to(fo, {
-        v: 1, duration: 0.8, ease: "power2.out",
+        v: 1, duration: SCREEN_FADE_IN_SEC, ease: SCREEN_FADE_IN_EASE,
         onUpdate: () => { screenOpacityRef.current = fo.v; },
       });
     }
@@ -638,7 +694,7 @@ function SceneContent() {
         screenOpacityRef.current = 0;
         const fadeIn = { v: 0 };
         gsap.to(fadeIn, {
-          v: 1, duration: 0.8, ease: "power2.out",
+          v: 1, duration: SCREEN_FADE_IN_SEC, ease: SCREEN_FADE_IN_EASE,
           onUpdate: () => { screenOpacityRef.current = fadeIn.v; },
         });
       }
@@ -687,15 +743,15 @@ function SceneContent() {
     const lightRestore = { v: lightDimRef.current };
     tl.add(() => {
       gsap.to(fadeOut, {
-        v: 0, duration: 0.8, ease: "power2.out",
+        v: 0, duration: SCREEN_FADE_OUT_SEC, ease: SCREEN_FADE_OUT_EASE,
         onUpdate: () => { screenOpacityRef.current = fadeOut.v; },
       });
       gsap.to(beamOut, {
-        v: 0, duration: 0.8, ease: "power2.out",
+        v: 0, duration: SCREEN_FADE_OUT_SEC, ease: SCREEN_FADE_OUT_EASE,
         onUpdate: () => { beamStrengthRef.current = beamOut.v; },
       });
       gsap.to(revealOut, {
-        v: 0, duration: 0.8, ease: "power2.out",
+        v: 0, duration: SCREEN_FADE_OUT_SEC, ease: SCREEN_FADE_OUT_EASE,
         onUpdate: () => {
           if (coneMatRef.current) coneMatRef.current.uniforms.uReveal.value = revealOut.v;
         },
@@ -784,6 +840,7 @@ function SceneContent() {
 export function Scene() {
   return (
     <Canvas
+      shadows={{ type: THREE.PCFSoftShadowMap }}
       camera={{ position: [0, 2, 8], fov: 45, near: 0.01, far: 500 }}
       gl={{
         antialias: true, powerPreference: "high-performance",

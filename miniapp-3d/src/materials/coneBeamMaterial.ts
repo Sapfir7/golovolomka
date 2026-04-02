@@ -1,11 +1,8 @@
 import * as THREE from "three";
 
 /**
- * Volumetric cone beam — adapted from threex.volumetricspotlightmaterial approach.
- *
- * Core idea: distance-based attenuation from spot position + angle-based
- * intensity via abs(dot(normal, viewDir))^anglePower. Combined with subtle
- * FBM noise and progressive reveal for cinematic light beam.
+ * Volumetric cone beam — distance + angle attenuation + 2D FBM noise
+ * (same family as erkanProjectionMaterial vignette) to break up hard edges.
  */
 
 const vert = `
@@ -15,6 +12,7 @@ varying float vT;
 varying vec3 vLocalPos;
 varying vec3 vNormal2;
 varying vec3 vWorldPosition;
+varying vec4 vClipPos;
 
 void main() {
   vLocalPos = position;
@@ -24,7 +22,8 @@ void main() {
   vec4 worldPos = modelMatrix * vec4(position, 1.0);
   vWorldPosition = worldPos.xyz;
 
-  gl_Position = projectionMatrix * viewMatrix * worldPos;
+  vClipPos = projectionMatrix * viewMatrix * worldPos;
+  gl_Position = vClipPos;
 }
 `;
 
@@ -42,6 +41,7 @@ varying float vT;
 varying vec3 vLocalPos;
 varying vec3 vNormal2;
 varying vec3 vWorldPosition;
+varying vec4 vClipPos;
 
 float hash(vec3 p) {
   p = fract(p * vec3(443.897, 441.423, 437.195));
@@ -61,7 +61,7 @@ float noise3(vec3 p) {
     f.z);
 }
 
-float fbm(vec3 p) {
+float fbm3(vec3 p) {
   float v = 0.0, a = 0.5;
   for (int i = 0; i < 4; i++) {
     v += a * noise3(p);
@@ -71,29 +71,60 @@ float fbm(vec3 p) {
   return v;
 }
 
+// Same 2D noise stack as erkanProjectionMaterial (vignette grain)
+float hash2(vec2 p) {
+  p = fract(p * vec2(443.897, 441.423));
+  p += dot(p, p.yx + 19.19);
+  return fract(p.x * p.y);
+}
+
+float noise2(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(hash2(i), hash2(i + vec2(1,0)), f.x),
+    mix(hash2(i + vec2(0,1)), hash2(i + vec2(1,1)), f.x),
+    f.y);
+}
+
+float fbm2(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) {
+    v += a * noise2(p);
+    p *= 2.2;
+    a *= 0.45;
+  }
+  return v;
+}
+
 void main() {
-  // Distance-based attenuation from light source (threex approach)
   float dist = distance(vWorldPosition, uSpotPos) / uAttenuation;
   float intensity = 1.0 - clamp(dist, 0.0, 1.0);
 
-  // Angle-based: cone edges dim, center bright (view-dependent volumetric)
   vec3 viewDir = normalize(cameraPosition - vWorldPosition);
   float angleFade = pow(abs(dot(vNormal2, viewDir)), uAnglePower);
   intensity *= angleFade;
 
-  // Progressive reveal: tip first, then base
   float revealEdge = 1.0 - uReveal;
   float revealMask = smoothstep(revealEdge, revealEdge + 0.3, vT);
 
-  // Subtle organic noise — low-frequency, slow-moving
   vec3 np = vLocalPos * 0.6 + vec3(uTime * 0.04, uTime * 0.06, uTime * 0.03);
-  float n = fbm(np);
+  float n3 = fbm3(np);
+
+  vec2 ndc = vClipPos.xy / max(vClipPos.w, 1e-4);
+  vec2 screenUv = ndc * 0.5 + 0.5;
+  vec2 grainUv = screenUv * 900.0 + vec2(uTime * 0.07, uTime * 0.05);
+  float n2 = fbm2(grainUv * 0.06 + vec2(uTime * 0.04, -uTime * 0.03));
+  float n2fine = fbm2(grainUv * 0.18 + vec2(uTime * 0.1, uTime * 0.08));
+
+  float edgeBreak = mix(0.55, 1.0, n2) * mix(0.7, 1.0, n2fine);
+  intensity *= edgeBreak;
 
   float alpha = uStrength * intensity * revealMask;
-  alpha *= mix(0.7, 1.0, n);
+  alpha *= mix(0.55, 1.0, n3);
 
-  // Emissive output for bloom pickup
-  vec3 col = uColor * (1.2 + 0.25 * n);
+  vec3 col = uColor * (1.15 + 0.35 * n3 + 0.12 * (n2 - 0.5));
 
   gl_FragColor = vec4(col, alpha);
 }
