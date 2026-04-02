@@ -21,11 +21,3 @@ export const CONE_BEAM_NEUTRAL = "#faf3b0";
 
 /** Screen vignette when no memory tint is set yet */
 export const FALLBACK_VIGNETTE_HEX = "#322e52";
-
-/** Cycle GLB scene lights through the four brand colors */
-export const LIGHT_CYCLE_HEX = [
-  COLOR_HEX.yellow,
-  COLOR_HEX.red,
-  COLOR_HEX.blue,
-  COLOR_HEX.purple,
-] as const;

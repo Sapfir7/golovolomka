@@ -29,25 +29,31 @@ varying vec2 vUv;
 void main() {
   vec2 c = vUv - 0.5;
   float r = length(c);
-  float edge = 1.0 - smoothstep(0.36, 0.5, r);
-  if (edge < 0.001) discard;
+  float disk = 1.0 - smoothstep(0.485, 0.5, r);
+  if (disk < 0.001) discard;
 
   vec3 rgb = texture2D(map, vUv).rgb;
   float lum = dot(rgb, vec3(0.299, 0.587, 0.114));
   rgb = mix(vec3(lum), rgb, 0.76);
   rgb = clamp(rgb * 0.93 + vec3(0.025, 0.022, 0.02), 0.0, 1.0);
-  vec3 tinted = mix(rgb, uTint * (0.48 + 0.85 * lum), 0.55);
+  vec3 photoTinted = mix(rgb, uTint * (0.48 + 0.85 * lum), 0.55);
 
-  float topGlow = smoothstep(0.2, 0.62, vUv.y) * smoothstep(0.55, 0.25, r) * 0.42;
-  tinted += vec3(0.941, 0.824, 0.008) * topGlow;
+  float rn = clamp(r * 2.0, 0.0, 1.0);
+  float photoW = 1.0 - smoothstep(0.38, 0.86, rn);
+  vec3 edgeMid = uTint * 0.48;
+  vec3 edgeDark = uTint * 0.11;
+  vec3 edgeFill = mix(edgeMid, edgeDark, smoothstep(0.5, 1.0, rn));
+  vec3 tinted = mix(edgeFill, photoTinted, photoW);
 
-  float botCool = smoothstep(0.88, 0.42, vUv.y) * smoothstep(0.32, 0.5, r) * 0.1;
-  tinted += vec3(0.357, 0.580, 0.929) * botCool;
+  float topGlow = smoothstep(0.2, 0.62, vUv.y) * smoothstep(0.55, 0.25, r) * 0.35;
+  tinted += uTint * topGlow;
+  float botGlow = smoothstep(0.88, 0.42, vUv.y) * smoothstep(0.32, 0.5, r) * 0.09;
+  tinted += uTint * 0.9 * botGlow;
 
   float g = fract(sin(dot(vUv * 620.0 + uTime * 0.5, vec2(12.9898, 78.233))) * 43758.5453);
-  tinted += (g - 0.5) * 0.035;
+  tinted += (g - 0.5) * 0.032;
 
-  gl_FragColor = vec4(tinted, uOpacity * edge);
+  gl_FragColor = vec4(tinted, uOpacity * disk);
 }
 `;
 
