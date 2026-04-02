@@ -1,17 +1,12 @@
 /**
- * Shared preview texture cache.
- *
- * Загружает картинку, центр-кропит в квадрат, возвращает Three.js текстуру.
- *
- * Usage:
- *   - Call `preloadAllPreviews(urls)` early (App bootstrap) to start fetching.
- *   - In components call `getPreviewTexture(url)` — returns cached promise.
+ * Shared preview texture cache — center-crop square, modest resolution for GPU/CPU.
  */
 import * as THREE from "three";
 
 const cache = new Map<string, Promise<THREE.Texture | null>>();
 
-const PREVIEW_SIDE = 512;
+/** 256px: enough for small orbs, less fill-rate than 512 */
+const PREVIEW_SIDE = 256;
 
 function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
   return new Promise((resolve) => {
@@ -40,9 +35,9 @@ function loadViaCanvas(url: string): Promise<THREE.Texture | null> {
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
-      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
-      texture.generateMipmaps = true;
+      texture.generateMipmaps = false;
       texture.needsUpdate = true;
       resolve(texture);
     };

@@ -63,7 +63,7 @@ float noise3(vec3 p) {
 
 float fbm3(vec3 p) {
   float v = 0.0, a = 0.5;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 3; i++) {
     v += a * noise3(p);
     p *= 2.0;
     a *= 0.5;
@@ -90,7 +90,7 @@ float noise2(vec2 p) {
 
 float fbm2(vec2 p) {
   float v = 0.0, a = 0.5;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 3; i++) {
     v += a * noise2(p);
     p *= 2.2;
     a *= 0.45;
@@ -117,23 +117,21 @@ void main() {
   float radXZ = length(vLocalPos.xz) + 1e-4;
   vec2 wallUv = vec2(az * 2.8 + uTime * 0.05, vT * 9.0 + n3 * 0.4);
   float wallGrain = fbm2(wallUv);
-  float wallFine = fbm2(vec2(az * 9.0 - uTime * 0.12, radXZ * 3.5 + vT * 5.0));
-  float wallBreak = mix(0.4, 1.0, wallGrain) * mix(0.55, 1.0, wallFine);
+  float wallFine = noise2(vec2(az * 6.0 - uTime * 0.1, radXZ * 2.5 + vT * 4.0));
+  float wallBreak = mix(0.42, 1.0, wallGrain) * mix(0.62, 1.0, wallFine);
   intensity *= wallBreak;
 
   vec2 ndc = vClipPos.xy / max(vClipPos.w, 1e-4);
   vec2 screenUv = ndc * 0.5 + 0.5;
-  vec2 grainUv = screenUv * 900.0 + vec2(uTime * 0.07, uTime * 0.05);
-  float n2 = fbm2(grainUv * 0.06 + vec2(uTime * 0.04, -uTime * 0.03));
-  float n2fine = fbm2(grainUv * 0.18 + vec2(uTime * 0.1, uTime * 0.08));
-
-  float edgeBreak = mix(0.45, 1.0, n2) * mix(0.6, 1.0, n2fine);
+  vec2 grainUv = screenUv * 720.0 + vec2(uTime * 0.06, uTime * 0.04);
+  float n2 = fbm2(grainUv * 0.07 + vec2(uTime * 0.04, -uTime * 0.03));
+  float edgeBreak = mix(0.48, 1.0, n2);
   intensity *= edgeBreak;
 
   float alpha = uStrength * intensity * revealMask;
   alpha *= mix(0.55, 1.0, n3);
 
-  vec3 col = uColor * (1.15 + 0.35 * n3 + 0.12 * (n2 - 0.5));
+  vec3 col = uColor * (1.12 + 0.32 * n3 + 0.08 * (n2 - 0.5));
 
   gl_FragColor = vec4(col, alpha);
 }

@@ -891,7 +891,7 @@ export function Scene() {
         antialias: true, powerPreference: "high-performance",
         toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.82,
       }}
-      dpr={[1, 1.75]}
+      dpr={[1, 1.45]}
       style={{ width: "100%", height: "100%" }}
     >
       <Suspense fallback={null}><SceneContent /></Suspense>

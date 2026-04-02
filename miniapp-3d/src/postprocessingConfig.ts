@@ -1,20 +1,16 @@
 /**
- * Post-processing defaults — Bloom maps to postprocessing BloomEffect
- * (UnrealBloomPass-style: threshold / intensity / radius).
+ * Post-processing — tuned for soft bloom (UnrealBloomPass-style via BloomEffect).
+ * Lower multisampling + resolutionScale saves GPU on mobile.
  */
 export const EFFECT_COMPOSER = {
-  multisampling: 4,
-  resolutionScale: 1,
+  multisampling: 0,
+  resolutionScale: 0.85,
 } as const;
 
 export const BLOOM = {
-  /** Luminance threshold (darker pixels excluded from bloom) */
-  luminanceThreshold: 0.1,
-  /** Soft edge at threshold */
-  luminanceSmoothing: 0.25,
-  /** Bloom strength */
-  intensity: 0.7,
-  /** Blur spread (mipmap blur) */
-  radius: 0.5,
+  luminanceThreshold: 0.12,
+  luminanceSmoothing: 0.35,
+  intensity: 0.58,
+  radius: 0.58,
   mipmapBlur: true,
 } as const;
