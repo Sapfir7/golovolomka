@@ -1,15 +1,16 @@
 import * as THREE from "three";
 
 /** Усиление карты нормалей относительно значения из glTF (слишком высокое усиливает швы по тангентам). */
-export const GLB_NORMAL_SCALE_MUL = 1.25;
+export const GLB_NORMAL_SCALE_MUL = 1.12;
 
 /**
  * Квант позиции для поиска дубликатов вершин на UV-швах (чуть крупнее — ловим float-дрейф экспорта).
  */
-const NORMAL_WELD_EPS = 1e-4;
+/** Чуть шире — иногда шов даёт микросдвиг позиции между дубликатами вершин. */
+const NORMAL_WELD_EPS = 1.5e-4;
 
-/** Если все нормали в «кучке» почти сонаправлены — усредняем (гладкий шов). Иначе кромка — не трогаем. */
-const WELD_MIN_NORMAL_ALIGN = 0.72;
+/** Ниже порог = больше швов сшиваем на гладких поверхностях (мебель/цилиндры). */
+const WELD_MIN_NORMAL_ALIGN = 0.58;
 
 const _nAcc = new THREE.Vector3();
 const _va = new THREE.Vector3();
@@ -59,6 +60,66 @@ function weldSimilarNormalsAtCoincidentPositions(geometry: THREE.BufferGeometry)
     for (const vi of indices) norm.setXYZ(vi, _nAcc.x, _nAcc.y, _nAcc.z);
   }
   norm.needsUpdate = true;
+}
+
+/**
+ * Те же «кучки», что и у нормалей: усредняем тангент (xyz), ортогонализуем к N, единый знак w.
+ * Убирает резкий разрыв normal map на UV-швах, когда нормали уже согласованы.
+ */
+function weldTangentFramesAtCoincidentPositions(geometry: THREE.BufferGeometry): void {
+  const pos = geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+  const norm = geometry.getAttribute("normal") as THREE.BufferAttribute | undefined;
+  const tan = geometry.getAttribute("tangent") as THREE.BufferAttribute | undefined;
+  if (!pos || !norm || !tan || tan.itemSize < 4) return;
+  if (pos.count !== norm.count || pos.count !== tan.count) return;
+
+  const q = 1 / NORMAL_WELD_EPS;
+  const buckets = new Map<string, number[]>();
+  for (let i = 0; i < pos.count; i++) {
+    const key = `${Math.round(pos.getX(i) * q)},${Math.round(pos.getY(i) * q)},${Math.round(pos.getZ(i) * q)}`;
+    let arr = buckets.get(key);
+    if (!arr) {
+      arr = [];
+      buckets.set(key, arr);
+    }
+    arr.push(i);
+  }
+
+  for (const indices of buckets.values()) {
+    if (indices.length < 2) continue;
+    let minPairDot = 1;
+    for (let a = 0; a < indices.length; a++) {
+      _va.set(norm.getX(indices[a]), norm.getY(indices[a]), norm.getZ(indices[a]));
+      for (let b = a + 1; b < indices.length; b++) {
+        _vb.set(norm.getX(indices[b]), norm.getY(indices[b]), norm.getZ(indices[b]));
+        minPairDot = Math.min(minPairDot, _va.dot(_vb));
+      }
+    }
+    if (minPairDot < WELD_MIN_NORMAL_ALIGN) continue;
+
+    const i0 = indices[0];
+    _nAcc.set(norm.getX(i0), norm.getY(i0), norm.getZ(i0));
+
+    _va.set(0, 0, 0);
+    let wAcc = 0;
+    for (const vi of indices) {
+      _va.x += tan.getX(vi);
+      _va.y += tan.getY(vi);
+      _va.z += tan.getZ(vi);
+      wAcc += tan.getW(vi);
+    }
+    const ndot = _va.dot(_nAcc);
+    _vb.set(
+      _va.x - _nAcc.x * ndot,
+      _va.y - _nAcc.y * ndot,
+      _va.z - _nAcc.z * ndot,
+    );
+    if (_vb.lengthSq() < 1e-18) continue;
+    _vb.normalize();
+    const w = wAcc >= 0 ? 1 : -1;
+    for (const vi of indices) tan.setXYZW(vi, _vb.x, _vb.y, _vb.z, w);
+  }
+  tan.needsUpdate = true;
 }
 
 /** Non–color data: must not use sRGB or normals look flat / roughness washes out. */
@@ -170,10 +231,14 @@ export function configureGlbPbrMaterials(root: THREE.Object3D): void {
         m.normalMap != null,
     );
     const g = mesh.geometry;
-    if (!hasNormal || g.getAttribute("tangent")) return;
+    if (!hasNormal) return;
     if (!g.index || !g.getAttribute("uv") || !g.getAttribute("normal")) return;
+
+    /* Тангенты из glTF почти всегда разрываются на UV-швах — пересчитываем после сварки нормалей. */
+    if (g.getAttribute("tangent")) g.deleteAttribute("tangent");
     try {
       g.computeTangents();
+      weldTangentFramesAtCoincidentPositions(g);
     } catch {
       /* non-indexed or bad UVs */
     }
