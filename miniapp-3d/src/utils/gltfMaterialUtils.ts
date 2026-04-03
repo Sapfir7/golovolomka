@@ -1,7 +1,65 @@
 import * as THREE from "three";
 
-/** Усиление карты нормалей относительно значения из glTF. */
-export const GLB_NORMAL_SCALE_MUL = 1.5;
+/** Усиление карты нормалей относительно значения из glTF (слишком высокое усиливает швы по тангентам). */
+export const GLB_NORMAL_SCALE_MUL = 1.25;
+
+/**
+ * Квант позиции для поиска дубликатов вершин на UV-швах (чуть крупнее — ловим float-дрейф экспорта).
+ */
+const NORMAL_WELD_EPS = 1e-4;
+
+/** Если все нормали в «кучке» почти сонаправлены — усредняем (гладкий шов). Иначе кромка — не трогаем. */
+const WELD_MIN_NORMAL_ALIGN = 0.72;
+
+const _nAcc = new THREE.Vector3();
+const _va = new THREE.Vector3();
+const _vb = new THREE.Vector3();
+
+/**
+ * Сглаживает линии на UV-швах: вершины в одной точке пространства получают одну нормаль,
+ * но только если они уже почти параллельны (не съедаем острые углы шкафа).
+ */
+function weldSimilarNormalsAtCoincidentPositions(geometry: THREE.BufferGeometry): void {
+  const pos = geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+  const norm = geometry.getAttribute("normal") as THREE.BufferAttribute | undefined;
+  if (!pos || !norm || pos.count !== norm.count) return;
+
+  const q = 1 / NORMAL_WELD_EPS;
+  const buckets = new Map<string, number[]>();
+  for (let i = 0; i < pos.count; i++) {
+    const key = `${Math.round(pos.getX(i) * q)},${Math.round(pos.getY(i) * q)},${Math.round(pos.getZ(i) * q)}`;
+    let arr = buckets.get(key);
+    if (!arr) {
+      arr = [];
+      buckets.set(key, arr);
+    }
+    arr.push(i);
+  }
+
+  for (const indices of buckets.values()) {
+    if (indices.length < 2) continue;
+    let minPairDot = 1;
+    for (let a = 0; a < indices.length; a++) {
+      _va.set(norm.getX(indices[a]), norm.getY(indices[a]), norm.getZ(indices[a]));
+      for (let b = a + 1; b < indices.length; b++) {
+        _vb.set(norm.getX(indices[b]), norm.getY(indices[b]), norm.getZ(indices[b]));
+        minPairDot = Math.min(minPairDot, _va.dot(_vb));
+      }
+    }
+    if (minPairDot < WELD_MIN_NORMAL_ALIGN) continue;
+
+    _nAcc.set(0, 0, 0);
+    for (const vi of indices) {
+      _nAcc.x += norm.getX(vi);
+      _nAcc.y += norm.getY(vi);
+      _nAcc.z += norm.getZ(vi);
+    }
+    if (_nAcc.lengthSq() < 1e-22) continue;
+    _nAcc.normalize();
+    for (const vi of indices) norm.setXYZ(vi, _nAcc.x, _nAcc.y, _nAcc.z);
+  }
+  norm.needsUpdate = true;
+}
 
 /** Non–color data: must not use sRGB or normals look flat / roughness washes out. */
 function underNamedAncestor(o: THREE.Object3D, name: string): boolean {
@@ -30,6 +88,7 @@ export function smoothGlbVertexNormals(root: THREE.Object3D): void {
     const g = mesh.geometry;
     if (!g.getAttribute("position")) return;
     g.computeVertexNormals();
+    weldSimilarNormalsAtCoincidentPositions(g);
 
     const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.Material[];
     const needsNewTangents = mats.some(
