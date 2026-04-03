@@ -14,8 +14,11 @@ import { createConeBeamMaterial } from "../materials/coneBeamMaterial";
 import { fetchPlayback } from "../api/client";
 import { BLOOM, EFFECT_COMPOSER, SSAO as SSAO_CFG } from "../postprocessingConfig";
 import {
+  applyGlbNormalScale,
   configureGlbPbrMaterials,
   enhanceGltfTextureSampling,
+  GLB_NORMAL_SCALE_MUL,
+  smoothGlbVertexNormals,
   softenGlbMaterials,
 } from "../utils/gltfMaterialUtils";
 import {
@@ -274,9 +277,11 @@ function SceneContent() {
     const POINT005 = 9.5;
     const collected: { light: THREE.Light; base: number }[] = [];
 
+    smoothGlbVertexNormals(model);
     configureGlbPbrMaterials(model);
     softenGlbMaterials(model);
     enhanceGltfTextureSampling(model, gl);
+    applyGlbNormalScale(model, GLB_NORMAL_SCALE_MUL);
 
     model.traverse((o) => {
       const light = o as THREE.Light;

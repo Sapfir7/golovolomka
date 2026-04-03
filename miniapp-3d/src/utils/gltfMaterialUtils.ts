@@ -1,6 +1,64 @@
 import * as THREE from "three";
 
+/** Усиление карты нормалей относительно значения из glTF. */
+export const GLB_NORMAL_SCALE_MUL = 1.5;
+
 /** Non–color data: must not use sRGB or normals look flat / roughness washes out. */
+function underNamedAncestor(o: THREE.Object3D, name: string): boolean {
+  let p: THREE.Object3D | null = o.parent;
+  while (p) {
+    if (p.name === name) return true;
+    p = p.parent;
+  }
+  return false;
+}
+
+/**
+ * Сглаженные вершинные нормали (аналог Shade Smooth) на всей модели, кроме конуса луча —
+ * у него своя геометрия под шейдер.
+ * После пересчёта нормалей старые тангенты сбрасываются, если есть normalMap (их заново считает configureGlbPbrMaterials).
+ */
+export function smoothGlbVertexNormals(root: THREE.Object3D): void {
+  const skipSelf = new Set([
+    "trajectory_00", "trajectory_01", "trajectory_02", "trajectory_03", "trajectory_04",
+    "Conus_light",
+  ]);
+  root.traverse((o) => {
+    if (skipSelf.has(o.name) || underNamedAncestor(o, "Conus_light")) return;
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    const g = mesh.geometry;
+    if (!g.getAttribute("position")) return;
+    g.computeVertexNormals();
+
+    const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.Material[];
+    const needsNewTangents = mats.some(
+      (m) =>
+        (m instanceof THREE.MeshStandardMaterial || m instanceof THREE.MeshPhysicalMaterial) &&
+        m.normalMap != null,
+    );
+    if (needsNewTangents && g.getAttribute("tangent")) g.deleteAttribute("tangent");
+  });
+}
+
+/** Усилить normal map (и clearcoat normal) в `factor` раз. */
+export function applyGlbNormalScale(root: THREE.Object3D, factor: number): void {
+  if (factor === 1) return;
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.Material[];
+    for (const mat of mats) {
+      if (!(mat instanceof THREE.MeshStandardMaterial)) continue;
+      if (mat.normalMap) mat.normalScale.multiplyScalar(factor);
+      if (mat instanceof THREE.MeshPhysicalMaterial && mat.clearcoatNormalMap) {
+        mat.clearcoatNormalScale.multiplyScalar(factor);
+      }
+      mat.needsUpdate = true;
+    }
+  });
+}
+
 function fixDataTexture(tex: THREE.Texture): void {
   if (tex.colorSpace !== THREE.NoColorSpace) {
     tex.colorSpace = THREE.NoColorSpace;
