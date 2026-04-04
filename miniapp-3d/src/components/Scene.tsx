@@ -299,7 +299,8 @@ function SceneContent() {
           spotScreenRef.current = spot;
           spot.intensity = SPOT_BASE_INTENSITY;
           spot.castShadow = true;
-          spot.shadow.mapSize.set(1024, 1024);
+          spot.shadow.mapSize.set(2048, 2048);
+          spot.shadow.radius = 3.5;
           spot.shadow.bias = -0.0001;
           spot.shadow.normalBias = 0.05;
           collected.push({ light, base: SPOT_BASE_INTENSITY });
@@ -904,7 +905,7 @@ export function Scene() {
         powerPreference: IOS_WEBGL_SAFE ? "default" : "high-performance",
         toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.82,
       }}
-      dpr={IOS_WEBGL_SAFE ? [1, 1] : [1, 1.45]}
+      dpr={IOS_WEBGL_SAFE ? [1, 1] : [1, 2]}
       style={{ width: "100%", height: "100%" }}
     >
       <Suspense fallback={null}>
