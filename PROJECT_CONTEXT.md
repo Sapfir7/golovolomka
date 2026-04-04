@@ -14,7 +14,7 @@
 - Deploy: Render Web Service
 
 ## 3D scene and assets
-- **Файл сцены:** `miniapp-3d/public/golovolomka_v01042026.glb` → после сборки `miniapp-3d-dist/golovolomka_v01042026.glb`, URL **`/miniapp-3d/golovolomka_v01042026.glb`**. `useGLTF` + `scene.clone(true)`; свет и материалы только из GLB.
+- **Файл сцены:** `miniapp-3d/public/temp_krik1_temp.glb` → после сборки `miniapp-3d-dist/temp_krik1_temp.glb`, URL **`/miniapp-3d/temp_krik1_temp.glb`**. `useGLTF` + `scene.clone(true)`; свет и материалы только из GLB.
 - **Имена объектов (Blender → GLB):** слоты **`Slot00`…`Slot09`**; экран **`Erkan`**; камеры-ноды **`Camera.001`** (режим полки) и **`Camera`** (режим стола/проектора) — задаются константами **`GLTF_CAMERA_NODE_SHELF`** / **`GLTF_CAMERA_NODE_DESK`**; при перепутанных ролях в Blender поменять строки местами. Точка «посадки» шара у проектора: **`pos_final`** / **`Pos_final`**, иначе центр **`Erkan`**. Траектория шара: **`Temp1` → `Temp2` → `Temp3`** (в рендере скрыты). Средняя точка дуги камеры полка→стол: **`Cam_temp`** / **`cam_temp`** (тоже скрыт, только позиция).
 - **Камера в коде:** позиция и точка взгляда из GLB через **`cameraFraming`** (мир. позиция + локальный **−Z** через `getWorldQuaternion`). Стартовый `Canvas` — нейтральный запасной кадр до применения **`Camera.001`**; FOV/near/far с **`camShelf`** в `useEffect`.
 - **Свет:** только **`KHR_lights_punctual`** из GLB; отдельных ambient/hemisphere в коде нет. **`toneMappingExposure: 1`**, **`ACESFilmicToneMapping`**. **`DeskVignette`** — только режим стола.

@@ -760,7 +760,7 @@ app.get("/miniapp/", (req, res) => {
 const MINIAPP3D_DIR = path.join(__dirname, "miniapp-3d-dist");
 if (fs.existsSync(MINIAPP3D_DIR)) {
   app.use("/miniapp-3d", express.static(MINIAPP3D_DIR));
-  // Сцена: miniapp-3d-dist/golovolomka_v01042026.glb (из miniapp-3d/public при сборке)
+  // Сцена: miniapp-3d-dist/temp_krik1_temp.glb (из miniapp-3d/public при сборке)
   // SPA fallback — serve index.html for all /miniapp-3d/* routes
   app.get("/miniapp-3d/*", (req, res) => {
     res.sendFile(path.join(MINIAPP3D_DIR, "index.html"));
