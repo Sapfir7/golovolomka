@@ -45,7 +45,6 @@ float noise2(vec2 p) {
     u.y);
 }
 
-// Lightweight FBM (3 octaves) — smoky vignette without triple fbm cost
 float fbmCheap(vec2 p) {
   float v = 0.0, a = 0.55;
   for (int i = 0; i < 3; i++) {
@@ -70,37 +69,37 @@ void main() {
   float ellipse = length(q);
   float memR = ellipse / uTexScale;
 
-  float photoMask = 1.0 - smoothstep(0.34, 0.92, memR);
-  photoMask = pow(max(photoMask, 0.0), 0.94);
+  float photoMask = 1.0 - smoothstep(0.38, 0.88, memR);
+  photoMask = pow(max(photoMask, 0.0), 0.97);
 
   float lum0 = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
-  vec3 photoRetro = mix(vec3(lum0), texel.rgb, 0.88);
-  photoRetro = clamp(photoRetro * 0.95 + 0.018, 0.0, 1.0);
-  vec3 tinted = mix(photoRetro, uVigTint * (0.5 + lum0 * 0.88), uColorMix);
+  vec3 photoRetro = mix(vec3(lum0), texel.rgb, 0.82);
+  photoRetro = clamp(photoRetro * 0.92 + 0.028, 0.0, 1.0);
+  vec3 tinted = mix(photoRetro, uVigTint * (0.52 + lum0 * 0.82), uColorMix * 0.85);
 
-  vec3 vigBase = mix(uVigTint, vec3(0.98, 0.95, 0.55), 0.14);
-  float vn = fbmCheap(vUv * 2.6);
-  vec3 vigCol = vigBase * (0.14 + 0.16 * vn);
+  vec3 vigBase = mix(uVigTint, vec3(0.98, 0.95, 0.55), 0.12);
+  float vn = fbmCheap(vUv * 2.2);
+  vec3 vigCol = vigBase * (0.12 + 0.12 * vn);
 
   vec3 rgb = mix(vigCol, tinted, photoMask);
 
-  float bloomR = smoothstep(0.42, 0.72, memR) * (1.0 - smoothstep(0.72, 1.35, memR));
-  vec3 warmRim = mix(uVigTint, vec3(0.941, 0.824, 0.008), 0.45);
-  rgb += warmRim * bloomR * uVigStr * 0.22;
+  float bloomR = smoothstep(0.44, 0.74, memR) * (1.0 - smoothstep(0.74, 1.28, memR));
+  vec3 warmRim = mix(uVigTint, vec3(0.941, 0.824, 0.008), 0.38);
+  rgb += warmRim * bloomR * uVigStr * 0.16;
 
-  float outerNoise = fbmCheap(vUv * 3.8);
-  float outerEdge = 0.72 + outerNoise * 0.1;
-  float outerMask = 1.0 - smoothstep(outerEdge - 0.2, outerEdge + 0.07, ellipse);
+  float outerNoise = fbmCheap(vUv * 3.2);
+  float outerEdge = 0.74 + outerNoise * 0.08;
+  float outerMask = 1.0 - smoothstep(outerEdge - 0.22, outerEdge + 0.09, ellipse);
 
-  float fiberZone = smoothstep(0.42, 0.62, ellipse) *
-                    (1.0 - smoothstep(outerEdge - 0.06, outerEdge + 0.1, ellipse));
-  outerMask += fiberZone * fbmCheap(vUv * 6.0) * 0.04;
+  float fiberZone = smoothstep(0.44, 0.64, ellipse) *
+                    (1.0 - smoothstep(outerEdge - 0.05, outerEdge + 0.09, ellipse));
+  outerMask += fiberZone * fbmCheap(vUv * 5.0) * 0.025;
   outerMask = clamp(outerMask, 0.0, 1.0);
 
-  float innerGlow = 1.0 - smoothstep(0.0, uTexScale * 0.5, ellipse);
-  rgb += uVigTint * innerGlow * 0.035;
+  float innerGlow = 1.0 - smoothstep(0.0, uTexScale * 0.52, ellipse);
+  rgb += uVigTint * innerGlow * 0.028;
 
-  float grain = (hash2(vUv * 500.0) - 0.5) * 0.014;
+  float grain = (hash2(vUv * 420.0) - 0.5) * 0.008;
 
   float finalAlpha = outerMask * uOpacity;
   if (finalAlpha < 0.004) discard;
@@ -108,7 +107,7 @@ void main() {
 }
 `;
 
-export interface ErkanProjectionUniforms {
+export interface ScreenProjectionUniforms {
   vignetteTint: THREE.Color;
   vignetteStrength: number;
   uvRotation: number;
@@ -118,9 +117,9 @@ export interface ErkanProjectionUniforms {
   sphereCurve?: number;
 }
 
-export function createErkanProjectionMaterial(
+export function createScreenProjectionMaterial(
   map: THREE.Texture,
-  u: ErkanProjectionUniforms
+  u: ScreenProjectionUniforms
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -130,9 +129,9 @@ export function createErkanProjectionMaterial(
       uUvRotation: { value: u.uvRotation },
       uMirrorX: { value: u.mirrorX ? 1.0 : 0.0 },
       uOpacity: { value: 1.0 },
-      uColorMix: { value: u.colorMix ?? 0.3 },
+      uColorMix: { value: u.colorMix ?? 0.28 },
       uTexScale: { value: u.texScale ?? 1.0 },
-      uSphereCurve: { value: u.sphereCurve ?? 0.07 },
+      uSphereCurve: { value: u.sphereCurve ?? 0.032 },
     },
     vertexShader,
     fragmentShader,

@@ -3,7 +3,7 @@ import { CONE_BEAM_NEUTRAL } from "../memoryPalette";
 
 /**
  * Volumetric cone beam — distance + angle attenuation + 2D FBM noise
- * (same family as erkanProjectionMaterial vignette) to break up hard edges.
+ * (same family as screenProjectionMaterial vignette) to break up hard edges.
  */
 
 const vert = `
@@ -72,7 +72,7 @@ float fbm3(vec3 p) {
   return v;
 }
 
-// Same 2D noise stack as erkanProjectionMaterial (vignette grain)
+// Same 2D noise stack as screenProjectionMaterial (vignette grain)
 float hash2(vec2 p) {
   p = fract(p * vec2(443.897, 441.423));
   p += dot(p, p.yx + 19.19);

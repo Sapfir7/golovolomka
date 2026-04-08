@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GLB_CONE_NODE, GLB_SMOOTH_NORMAL_SKIP } from "../constants/gltfSceneNodes";
 
 /** Усиление карты нормалей относительно значения из glTF (слишком высокое усиливает швы по тангентам). */
 export const GLB_NORMAL_SCALE_MUL = 1.12;
@@ -138,12 +139,8 @@ function underNamedAncestor(o: THREE.Object3D, name: string): boolean {
  * После пересчёта нормалей старые тангенты сбрасываются, если есть normalMap (их заново считает configureGlbPbrMaterials).
  */
 export function smoothGlbVertexNormals(root: THREE.Object3D): void {
-  const skipSelf = new Set([
-    "trajectory_00", "trajectory_01", "trajectory_02", "trajectory_03", "trajectory_04",
-    "Conus_light",
-  ]);
   root.traverse((o) => {
-    if (skipSelf.has(o.name) || underNamedAncestor(o, "Conus_light")) return;
+    if (GLB_SMOOTH_NORMAL_SKIP.has(o.name) || underNamedAncestor(o, GLB_CONE_NODE)) return;
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh || !mesh.geometry) return;
     const g = mesh.geometry;

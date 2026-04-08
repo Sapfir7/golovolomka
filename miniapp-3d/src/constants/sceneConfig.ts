@@ -1,14 +1,13 @@
 /** GLB из `miniapp-3d/public/` → после сборки в `miniapp-3d-dist/` */
-export const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}temp_krik1_temp.glb`;
+export const SCENE_MODEL_URL = `${import.meta.env.BASE_URL}1res_08042026.glb`;
 
 export const ORB_RADIUS = 0.1125;
-export const NUM_SLOTS = 5;
 
 export const SCREEN_UV_ROTATION = -Math.PI / 2;
 export const SCREEN_MIRROR_X = true;
 
-export const SPOT_BASE_INTENSITY = 8;
-export const LIGHT_DIM_FACTOR = 0.22;
+export const SPOT_BASE_INTENSITY = 10;
+export const LIGHT_DIM_FACTOR = 0.32;
 export const VIGNETTE_EXPAND = 1.8;
 
 export const SCREEN_FADE_OUT_SEC = 0.8;

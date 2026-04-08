@@ -9,7 +9,7 @@ import { useStore } from "../store/useStore";
 import { MemoryOrb } from "./MemoryOrb";
 import type { Memory, Playback } from "../types";
 import { COLOR_HEX, CONE_BEAM_NEUTRAL, FALLBACK_VIGNETTE_HEX } from "../memoryPalette";
-import { createErkanProjectionMaterial } from "../materials/erkanProjectionMaterial";
+import { createScreenProjectionMaterial } from "../materials/screenProjectionMaterial";
 import { createConeBeamMaterial } from "../materials/coneBeamMaterial";
 import { fetchPlayback } from "../api/client";
 import { BLOOM, EFFECT_COMPOSER, SSAO as SSAO_CFG } from "../postprocessingConfig";
@@ -22,12 +22,22 @@ import {
   softenGlbMaterials,
 } from "../utils/gltfMaterialUtils";
 import {
+  GLB_CAMERA_SHELF,
+  GLB_CAMERAS_OUT,
+  GLB_CAMERAS_TO_SCREEN,
+  GLB_CONE_NODE,
+  GLB_FINISH_NODE,
+  GLB_SCREEN_NODE_CANDIDATES,
+  GLB_SHADOW_SKIP_NAMES,
+  GLB_SLOT_NAME_RE,
+  GLB_TABLE2_NODE,
+} from "../constants/gltfSceneNodes";
+import {
   CAM_FLY_AFTER_BEAM_DELAY,
   CAM_SHELF_TO_02_SEC,
   CAM_TO_MAIN_DURATION,
   IOS_WEBGL_SAFE,
   LIGHT_DIM_FACTOR,
-  NUM_SLOTS,
   ORB_DROP_DURATION,
   ORB_RADIUS,
   PAUSE_AT_CAM02_AFTER_DROP_SEC,
@@ -133,28 +143,23 @@ function smoothConeNormals(geometry: THREE.BufferGeometry): void {
   normAttr.needsUpdate = true;
 }
 
-const SHADOW_SKIP_NAMES = new Set([
-  "trajectory_00", "trajectory_01", "trajectory_02", "trajectory_03", "trajectory_04",
-  "Conus_light", "screen",
-]);
-
 /**
  * After GLB load: enable cast/receive shadows on scene meshes for light volume.
- * Skips helpers, cone, screen, trajectories; ignores tiny debris to limit GPU cost.
+ * Skips helpers, cone, screen, trajectories, слоты; ignores tiny debris to limit GPU cost.
  */
 function configureGlbMeshShadows(root: THREE.Object3D): void {
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh || !mesh.geometry) return;
 
-    if (SHADOW_SKIP_NAMES.has(o.name)) {
+    if (GLB_SHADOW_SKIP_NAMES.has(o.name) || GLB_SLOT_NAME_RE.test(o.name)) {
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       return;
     }
     let p: THREE.Object3D | null = o.parent;
     while (p) {
-      if (SHADOW_SKIP_NAMES.has(p.name)) {
+      if (GLB_SHADOW_SKIP_NAMES.has(p.name) || GLB_SLOT_NAME_RE.test(p.name)) {
         mesh.castShadow = false;
         mesh.receiveShadow = false;
         return;
@@ -227,25 +232,55 @@ function SceneContent() {
     const fb = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
     const wp = (n: string) => worldPos(model, n);
 
-    const slots = Array.from({ length: NUM_SLOTS }, (_, i) =>
-      wp(`Slot${String(i).padStart(2, "0")}`) ?? fb(5.097 - i * 0.27, 1.545, 0.75)
-    );
+    const slotEntries: { idx: number; v: THREE.Vector3 }[] = [];
+    model.traverse((o) => {
+      const m = o.name.match(GLB_SLOT_NAME_RE);
+      if (!m) return;
+      const idx = parseInt(m[1], 10);
+      const v = new THREE.Vector3();
+      o.getWorldPosition(v);
+      slotEntries.push({ idx, v });
+    });
+    slotEntries.sort((a, b) => a.idx - b.idx);
+    const slots =
+      slotEntries.length > 0
+        ? slotEntries.map((e) => e.v)
+        : [
+            fb(-13.044, 7.625, -11.32),
+            fb(-12.178, 7.625, -11.503),
+            fb(-11.285, 7.625, -11.67),
+            fb(-10.43, 7.625, -11.766),
+          ];
 
-    const screenObj = model.getObjectByName("screen") ?? null;
+    let screenObj: THREE.Object3D | null = null;
+    for (const name of GLB_SCREEN_NODE_CANDIDATES) {
+      const o = model.getObjectByName(name);
+      if (o) {
+        screenObj = o;
+        break;
+      }
+    }
+
     const screenCenter = (() => {
-      if (!screenObj) return fb(-7.7, 2.44, -3.72);
+      if (!screenObj) return fb(11.37, 3.65, 1.6);
       const box = new THREE.Box3().setFromObject(screenObj);
-      return box.isEmpty() ? fb(-7.7, 2.44, -3.72) : box.getCenter(new THREE.Vector3());
+      return box.isEmpty() ? fb(11.37, 3.65, 1.6) : box.getCenter(new THREE.Vector3());
     })();
 
-    const camShelf = findCam(model, "Camera_shkaf_00");
-    const camMain = findCam(model, "Camera");
-    const shelfFrame = camShelf ? camFrame(camShelf) : { pos: fb(4.68, 1.09, -3.3), look: fb(4.55, 1.09, 0.75) };
+    const camShelf = findCam(model, GLB_CAMERA_SHELF);
+    const shelfFrame = camShelf
+      ? camFrame(camShelf)
+      : { pos: fb(-40, 8, -2), look: fb(-15, 5, 0) };
 
-    const cam01 = findCam(model, "Camera_01");
-    const cam02 = findCam(model, "Camera_02");
-    const cam03 = findCam(model, "Camera_03");
-    const cam04 = findCam(model, "Camera_04");
+    const cTo0 = findCam(model, GLB_CAMERAS_TO_SCREEN[0]);
+    const cTo1 = findCam(model, GLB_CAMERAS_TO_SCREEN[1]);
+    const cTo2 = findCam(model, GLB_CAMERAS_TO_SCREEN[2]);
+    const cTo3 = findCam(model, GLB_CAMERAS_TO_SCREEN[3]);
+    const cOut5 = findCam(model, GLB_CAMERAS_OUT[0]);
+    const cOut4 = findCam(model, GLB_CAMERAS_OUT[1]);
+
+    const frameOr = (cam: THREE.PerspectiveCamera | null, fallback: { pos: THREE.Vector3; look: THREE.Vector3 }) =>
+      cam ? camFrame(cam) : fallback;
 
     return {
       slots,
@@ -253,18 +288,21 @@ function SceneContent() {
       screenCenter,
       screenBaseScale: screenObj?.scale.clone() ?? fb(1, 1, 1),
       shelfFrame,
-      cam01Frame: cam01 ? camFrame(cam01) : null,
-      cam02Frame: cam02 ? camFrame(cam02) : null,
-      cam03Frame: cam03 ? camFrame(cam03) : null,
-      cam04Frame: cam04 ? camFrame(cam04) : null,
-      camMainFrame: camMain ? camFrame(camMain) : { pos: fb(2.18, 1.68, -3.59), look: screenCenter.clone() },
+      camTo00Frame: frameOr(cTo0, shelfFrame),
+      camTo01Frame: frameOr(cTo1, shelfFrame),
+      camTo02Frame: frameOr(cTo2, shelfFrame),
+      camTo03Frame: frameOr(cTo3, shelfFrame),
+      camMainFrame: frameOr(cTo3, { pos: fb(-9.8, 3, -0.55), look: screenCenter.clone() }),
+      camOut05Frame: frameOr(cOut5, shelfFrame),
+      camOut04Frame: frameOr(cOut4, shelfFrame),
       camShelf,
-      traj00: wp("trajectory_00"),
-      traj01: wp("trajectory_01"),
-      traj02: wp("trajectory_02"),
-      traj03: wp("trajectory_03"),
-      traj04: wp("trajectory_04"),
-      roomCenter: slots.reduce((a, s) => a.add(s), new THREE.Vector3()).multiplyScalar(1 / slots.length),
+      trajPos00: wp("pos_00"),
+      trajPos01: wp("pos_01"),
+      trajPos02: wp("pos_02"),
+      trajFinish: wp(GLB_FINISH_NODE),
+      roomCenter: slots
+        .reduce((a, s) => a.add(s), new THREE.Vector3())
+        .multiplyScalar(1 / Math.max(slots.length, 1)),
     };
   }, [model]);
 
@@ -273,8 +311,8 @@ function SceneContent() {
     gl.shadowMap.enabled = true;
     gl.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    const POINT_BASE = 5.2;
-    const POINT005 = 9.5;
+    const POINT_BASE = 7.9;
+    const POINT001 = 12.2;
     const collected: { light: THREE.Light; base: number }[] = [];
 
     smoothGlbVertexNormals(model);
@@ -289,7 +327,7 @@ function SceneContent() {
       light.castShadow = false;
 
       if ((light as THREE.PointLight).isPointLight) {
-        const inten = (o.name === "Point.005" || o.name === "Point005") ? POINT005 : POINT_BASE;
+        const inten = o.name === "Point.001" ? POINT001 : POINT_BASE;
         light.intensity = inten;
         collected.push({ light, base: inten });
       }
@@ -310,21 +348,27 @@ function SceneContent() {
         }
       }
       if ((light as THREE.DirectionalLight).isDirectionalLight) {
-        light.intensity = 0.38;
-        collected.push({ light, base: 0.38 });
+        light.intensity = 0.52;
+        collected.push({ light, base: 0.52 });
       }
     });
 
     sceneLightsRef.current = collected;
     configureGlbMeshShadows(model);
 
-    const hideNames = new Set([
-      "trajectory_00", "trajectory_01", "trajectory_02",
-      "trajectory_03", "trajectory_04", "Conus_light",
-    ]);
-    model.traverse((o) => { if (hideNames.has(o.name)) o.visible = false; });
+    const hideTraj = new Set<string>(["pos_00", "pos_01", "pos_02", GLB_FINISH_NODE]);
+    model.traverse((o) => {
+      if (hideTraj.has(o.name)) o.visible = false;
+    });
 
-    const conusNode = model.getObjectByName("Conus_light");
+    const table2 = model.getObjectByName(GLB_TABLE2_NODE);
+    if (table2) table2.visible = false;
+
+    model.traverse((o) => {
+      if (o.name === "Sphere" || o.name.startsWith("Sphere.")) o.visible = false;
+    });
+
+    const conusNode = model.getObjectByName(GLB_CONE_NODE);
     if (conusNode) {
       coneOrigScaleRef.current = conusNode.scale.clone();
       conusNode.traverse((ch) => {
@@ -356,6 +400,7 @@ function SceneContent() {
           mesh.material = mat;
         }
       });
+      conusNode.visible = false;
     }
   }, [gl, model]);
 
@@ -396,7 +441,7 @@ function SceneContent() {
   );
 
   const adaptConeToScreen = useCallback(() => {
-    const conusNode = model.getObjectByName("Conus_light");
+    const conusNode = model.getObjectByName(GLB_CONE_NODE);
     const orig = coneOrigScaleRef.current;
     const obj = marker.screenObj;
     if (!conusNode || !orig || !obj) return;
@@ -436,12 +481,12 @@ function SceneContent() {
           ? `#${screenVigTintRef.current.getHexString()}`
           : (deskOrbTint ? COLOR_HEX[deskOrbTint] : FALLBACK_VIGNETTE_HEX);
         const vigTint = liftVignetteTint(baseHex);
-        const mat = createErkanProjectionMaterial(texture, {
-          vignetteTint: vigTint, vignetteStrength: 0.72,
+        const mat = createScreenProjectionMaterial(texture, {
+          vignetteTint: vigTint, vignetteStrength: 0.52,
           uvRotation: SCREEN_UV_ROTATION, mirrorX: SCREEN_MIRROR_X,
-          colorMix: 0.4,
+          colorMix: 0.3,
           texScale: 1 / VIGNETTE_EXPAND,
-          sphereCurve: 0.075,
+          sphereCurve: 0.028,
         });
         mat.uniforms.uOpacity = { value: opacity };
         screenShaderRef.current = mat;
@@ -462,7 +507,7 @@ function SceneContent() {
 
   /* ── Cone visibility ── */
   const showCone = useCallback((color?: THREE.Color) => {
-    const conusNode = model.getObjectByName("Conus_light");
+    const conusNode = model.getObjectByName(GLB_CONE_NODE);
     if (conusNode) conusNode.visible = true;
     if (color && coneMatRef.current) {
       coneMatRef.current.uniforms.uColor.value.copy(color);
@@ -470,7 +515,7 @@ function SceneContent() {
   }, [model]);
 
   const hideCone = useCallback(() => {
-    const conusNode = model.getObjectByName("Conus_light");
+    const conusNode = model.getObjectByName(GLB_CONE_NODE);
     if (conusNode) conusNode.visible = false;
     beamStrengthRef.current = 0;
     if (coneMatRef.current) {
@@ -669,26 +714,28 @@ function SceneContent() {
     const tl = gsap.timeline();
     timelineRef.current = tl;
 
-    const f01 = marker.cam01Frame ?? marker.shelfFrame;
-    const f02 = marker.cam02Frame ?? marker.camMainFrame;
-    const f03 = marker.cam03Frame ?? marker.camMainFrame;
+    const fShelf = marker.shelfFrame;
+    const fTo0 = marker.camTo00Frame;
+    const fTo1 = marker.camTo01Frame;
+    const fTo2 = marker.camTo02Frame;
     const fMain = marker.camMainFrame;
-    const t00 = marker.traj00 ?? slot.clone().add(new THREE.Vector3(0, 0.3, -2));
-    const t01 = marker.traj01 ?? fMain.pos.clone().add(new THREE.Vector3(2, 0.5, 0));
-    const t02 = marker.traj02 ?? t01.clone().add(new THREE.Vector3(0, -1.2, 0));
+    const p00 = marker.trajPos00 ?? slot.clone().add(new THREE.Vector3(0, 0.25, -1.2));
+    const p01 = marker.trajPos01 ?? p00.clone().add(new THREE.Vector3(-0.5, 0, 0.4));
+    const p02 = marker.trajPos02 ?? p01.clone().add(new THREE.Vector3(0, -1.2, 0.2));
+    const pFin = marker.trajFinish ?? p02.clone().add(new THREE.Vector3(0, -2.0, 0));
 
-    // 1) Cam: shelf → Cam01 → Cam02 (faster), Orb: slot → traj00 → traj01
+    // 1) Cam: shelf → Camera_to_00 → Camera_to_01; шар: слот → pos_00 → pos_01
     tl.add(() => {
-      animateCam([marker.shelfFrame, f01, f02], CAM_SHELF_TO_02_SEC);
-      animateOrb(slot, [t00, t01], CAM_SHELF_TO_02_SEC);
+      animateCam([fShelf, fTo0, fTo1], CAM_SHELF_TO_02_SEC);
+      animateOrb(slot, [p00, p01], CAM_SHELF_TO_02_SEC);
     }, 0);
 
-    // 2) Orb descends traj01 → traj02
+    // 2) Шар: pos_01 → pos_02 → finish
     tl.add(() => {
-      animateOrb(t01, [t02], ORB_DROP_DURATION);
+      animateOrb(p01, [p02, pFin], ORB_DROP_DURATION);
     }, T_ORB_DROP_START);
 
-    // 3) After pause on Cam02: beam + screen fade (same moment as cone light)
+    // 3) После паузы у «стола»: луч + экран; камера Camera_to_01 → to_02 → to_03
     const beamIn = { v: 0 };
     const revealIn = { v: 0 };
     const dimmer = { v: 1 };
@@ -732,9 +779,9 @@ function SceneContent() {
       if (tex) applyScreenTexture(tex, 0);
     }, T_BEAM_START);
 
-    // 4) Camera: Cam02 → Cam03 → CamMain
+    // 4) Камера: Camera_to_01 → Camera_to_02 → Camera_to_03 (стол/экран)
     tl.add(() => {
-      animateCam([f02, f03, fMain], CAM_TO_MAIN_DURATION);
+      animateCam([fTo1, fTo2, fMain], CAM_TO_MAIN_DURATION);
     }, T_CAM_TO_MAIN_START);
 
     // 5) Complete: hide flying orb, enter DESK
@@ -766,9 +813,14 @@ function SceneContent() {
     const tl = gsap.timeline();
     timelineRef.current = tl;
 
-    const f04 = marker.cam04Frame ?? marker.shelfFrame;
-    const t03 = marker.traj03 ?? marker.camMainFrame.pos.clone().add(new THREE.Vector3(2, 0, 0));
-    const t04 = marker.traj04 ?? slot.clone().add(new THREE.Vector3(0, 0.3, -2));
+    const fMain = marker.camMainFrame;
+    const fOut5 = marker.camOut05Frame;
+    const fOut4 = marker.camOut04Frame;
+    const fShelf = marker.shelfFrame;
+    const pFin = marker.trajFinish ?? slot.clone();
+    const p02 = marker.trajPos02 ?? pFin.clone();
+    const p01 = marker.trajPos01 ?? p02.clone();
+    const p00 = marker.trajPos00 ?? p01.clone();
 
     // 1) Fade out memory + beam + reveal reverse + restore lights (0.8s)
     const fadeOut = { v: 1 };
@@ -796,7 +848,7 @@ function SceneContent() {
       });
     }, 0);
 
-    // 2) Once faded: hide screen + cone, orb at traj_03, cam+orb fly home (1.8s)
+    // 2) Скрыть экран/конус; шар с finish → pos_02 → pos_01 → pos_00 → слот; камера to_03 → out_05 → out_04 → полка
     tl.add(() => {
       setDeskMemoryId(null);
       screenFadeTweenRef.current?.kill();
@@ -804,9 +856,9 @@ function SceneContent() {
       screenVigTintRef.current = null;
       disposePlaybackResources(); resetScreenScale(); hideScreen(); hideCone();
       screenOpacityRef.current = 0;
-      setFlying({ memory, pos: t03.clone() });
-      animateCam([marker.camMainFrame, f04, marker.shelfFrame], 1.8);
-      animateOrb(t03, [t04, slot], 1.8);
+      setFlying({ memory, pos: pFin.clone() });
+      animateCam([fMain, fOut5, fOut4, fShelf], 1.8);
+      animateOrb(pFin, [p02, p01, p00, slot], 1.8);
     }, 0.85);
 
     tl.add(() => {
@@ -827,12 +879,12 @@ function SceneContent() {
     };
   }, [backFromDesk, startWatch]);
 
-  const visibleMemories = memories.slice(0, marker.slots.length || NUM_SLOTS);
+  const visibleMemories = memories.slice(0, Math.max(1, marker.slots.length));
 
   return (
     <>
       <CameraAspectSync />
-      <ambientLight intensity={0.11} />
+      <ambientLight intensity={0.2} />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {
@@ -846,7 +898,7 @@ function SceneContent() {
             radius={ORB_RADIUS}
             color={memory.color}
             orbIndex={i}
-            previewUrl={memory.previewUrl}
+            previewUrl={null}
             isSelected={memory.id === selectedMemoryId}
             onClick={() => onOrbClick(memory, i)}
           />
@@ -857,7 +909,7 @@ function SceneContent() {
         <MemoryOrb
           position={[flying.pos.x, flying.pos.y, flying.pos.z]}
           radius={ORB_RADIUS} color={flying.memory.color} orbIndex={0}
-          previewUrl={flying.memory.previewUrl} isSelected
+          previewUrl={null} isSelected
         />
       )}
 

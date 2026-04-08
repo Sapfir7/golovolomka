@@ -10,16 +10,16 @@ export const EFFECT_COMPOSER = {
 } as const;
 
 export const BLOOM = {
-  luminanceThreshold: 0.12,
-  luminanceSmoothing: 0.35,
-  intensity: 0.58,
-  radius: 0.58,
+  luminanceThreshold: 0.1,
+  luminanceSmoothing: 0.48,
+  intensity: 0.42,
+  radius: 0.72,
   mipmapBlur: true,
 } as const;
 
 /** `radius` is screen-space scale in [1e-6, 1] per postprocessing SSAOEffect. */
 export const SSAO = {
-  intensity: 0.38,
+  intensity: 0.3,
   samples: 40,
   rings: 7,
   radius: 0.24,
