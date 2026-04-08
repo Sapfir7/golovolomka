@@ -268,9 +268,22 @@ function SceneContent() {
     })();
 
     const camShelf = findCam(model, GLB_CAMERA_SHELF);
-    const shelfFrame = camShelf
-      ? camFrame(camShelf)
-      : { pos: fb(-40, 8, -2), look: fb(-15, 5, 0) };
+    const roomC = slots
+      .reduce((a, s) => a.add(s), new THREE.Vector3())
+      .multiplyScalar(1 / Math.max(slots.length, 1));
+    const p00 = wp("pos_00");
+    let shelfFrame: { pos: THREE.Vector3; look: THREE.Vector3 };
+    if (p00) {
+      const toOrbs = new THREE.Vector3().subVectors(roomC, p00);
+      if (toOrbs.lengthSq() < 1e-8) toOrbs.set(0.35, -0.15, 0.92);
+      toOrbs.normalize();
+      const eye = p00.clone().addScaledVector(toOrbs, -0.5);
+      shelfFrame = { pos: eye, look: roomC.clone() };
+    } else if (camShelf) {
+      shelfFrame = camFrame(camShelf);
+    } else {
+      shelfFrame = { pos: fb(-40, 8, -2), look: fb(-15, 5, 0) };
+    }
 
     const cTo0 = findCam(model, GLB_CAMERAS_TO_SCREEN[0]);
     const cTo1 = findCam(model, GLB_CAMERAS_TO_SCREEN[1]);
@@ -300,9 +313,7 @@ function SceneContent() {
       trajPos01: wp("pos_01"),
       trajPos02: wp("pos_02"),
       trajFinish: wp(GLB_FINISH_NODE),
-      roomCenter: slots
-        .reduce((a, s) => a.add(s), new THREE.Vector3())
-        .multiplyScalar(1 / Math.max(slots.length, 1)),
+      roomCenter: roomC,
     };
   }, [model]);
 
@@ -884,7 +895,8 @@ function SceneContent() {
   return (
     <>
       <CameraAspectSync />
-      <ambientLight intensity={0.2} />
+      <ambientLight intensity={0.26} />
+      <hemisphereLight intensity={0.12} color="#c8d2e8" groundColor="#2a2218" />
       <primitive object={model} />
 
       {visibleMemories.map((memory, i) => {
